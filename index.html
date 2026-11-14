@@ -154,6 +154,7 @@ input[type=text]{width:100%;background:var(--panel);border:1px solid var(--line)
 .logo-big{font-family:var(--display);color:var(--pink);font-size:40px;text-align:center;text-shadow:0 0 8px #ff3ea5aa,0 0 24px #ff3ea566;margin:6px 0 0;line-height:1.1}
 .lede{font-family:var(--serif);font-size:19px;text-align:center;color:#e9e4ff;margin:0}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.ver{text-align:center;font-size:12px;letter-spacing:.08em;opacity:.55;margin:10px 0 4px}
 </style>
 </head>
 <body>
@@ -1267,6 +1268,8 @@ function showOver(){
 }
 
 /* ---------- intro & menu ---------- */
+// bump with every release, so a player can say which build they are on
+const APP_VERSION='0.2';
 function showIntro(){
   const saved=loadSave();
   openSheet(`<div class="logo-big">HOUSE EDGE</div><p class="lede">Las Vegas, 1988.</p>
@@ -1275,6 +1278,7 @@ function showIntro(){
   ${saved?`<button class="btn primary" data-a="resume">Continue your career · ${dateStr(saved.t)}</button>`:''}
   <input type="text" id="pname" placeholder="Your name" value="${esc(saved?saved.name:'Jeff')}" maxlength="18">
   <button class="btn ${saved?'':'primary'}" data-a="start">${saved?'Start over':'Fly to Las Vegas'}</button>
+  <p class="ver">Version ${APP_VERSION}</p>
   <div class="panel"><h3>Getting started</h3><p class="hint" style="margin:0">1. Buy something cheap on the Deals tab: you already hold a gaming license. 2. Press Next quarter and see how it does. 3. Keep your heat low, or the Gaming Commission may suspend or revoke your license. Tap any building on the skyline for its full numbers.</p></div>`);
 }
 function showMenu(){
@@ -1285,7 +1289,8 @@ function showMenu(){
   <p><b>Payouts:</b> owners receive 85% of each property's EBITDA every quarter. Losses become capital calls.</p>
   <p><b>Value</b> is about ${valMult(S.t).toFixed(1)} times annual EBITDA, never less than the land underneath. Land and condo prices follow real Las Vegas booms and busts.</p>
   <p><b>Win</b> by controlling every property, or by surviving sixty years. Lose by missing two reviews in a row, running out of backer confidence, or getting margin-called with nothing left to sell.</p></div></div>
-  <button class="btn" data-a="quit">Abandon this career</button>`);
+  <button class="btn" data-a="quit">Abandon this career</button>
+  <p class="ver">House Edge · version ${APP_VERSION}</p>`);
 }
 let toastT;function toast(m){let el=$('.toast');if(!el){el=document.createElement('div');el.className='toast';document.body.appendChild(el);}el.textContent=m;el.style.opacity=1;clearTimeout(toastT);toastT=setTimeout(()=>{el.style.opacity=0;},2800);}
 
