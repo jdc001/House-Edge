@@ -282,7 +282,7 @@ function newGame(name){
   let y=2026+Math.floor(rnd()*4);
   while(y<2046){shocks.push({s:(y-1988)*4+Math.floor(rnd()*4),len:4+Math.floor(rnd()*5),d:.78+rnd()*.12,n:'A national recession squeezes tourism'});y+=7+Math.floor(rnd()*5);}
   S={v:1,name,t:0,cash:10,loan:0,creditBonus:1,rateAdd:0,title:0,conf:60,heat:5,city:40,mob:0,rep:50,wage:1,
-    license:'none',licQ:0,licWait:0,strikes:0,target:13,lastReviewNW:10,skim:null,trend:1,
+    license:'licensed',licQ:0,licWait:0,strikes:0,target:13,lastReviewNW:10,skim:null,trend:1,
     props,rivals:RIVALS.map(r=>({...r})),inv:{},hist:[],log:[],pending:[],shocks,
     qInc:null,report:null,over:null,donQ:-1,mobQ:-1,lastEvt:{},nwPrev:5,fireRisk:{}};
   S.D0=props.filter(p=>p.status==='op').reduce((s,p)=>s+p.rooms,0)*91*.86;
@@ -290,7 +290,9 @@ function newGame(name){
   S.hist.push({t:0,nw:netWorth(),cash:S.cash,loan:S.loan});S.nwPrev=netWorth();
 }
 function save(){try{localStorage.setItem('houseedge-v1',JSON.stringify(S));}catch(e){}}
-function loadSave(){try{const s=localStorage.getItem('houseedge-v1');return s?JSON.parse(s):null;}catch(e){return null;}}
+function loadSave(){try{const s=localStorage.getItem('houseedge-v1');const o=s?JSON.parse(s):null;
+  // games saved before the license came with you: an investor who never lost it holds it now
+  if(o&&o.license==='none'&&!o.licWait)o.license='licensed';return o;}catch(e){return null;}}
 function clearSave(){try{localStorage.removeItem('houseedge-v1');}catch(e){}}
 
 /* =========================================================
@@ -1061,7 +1063,7 @@ function viewHold(){
   const lastInc=S.lastInc||null;
   return`<h2 class="sec">Your holdings</h2>
   <div class="panel"><div class="kv"><div>Stakes at market value</div><div>${M(stakesVal())}</div><div>Cash</div><div>${M(S.cash)}</div><div>Bank loan</div><div class="neg">${M(-S.loan)}</div><div class="tot">Net worth</div><div class="tot">${M(netWorth())}</div></div></div>
-  ${h.length?`<div class="cards">${h.map(pcard).join('')}</div>`:`<div class="panel"><p class="hint" style="margin:0">You don't own anything yet. Start on the <b>Deals</b> tab: cheap old motels and empty lots are where young investors begin. Apply for a gaming license on the <b>City</b> tab before you buy a casino.</p></div>`}
+  ${h.length?`<div class="cards">${h.map(pcard).join('')}</div>`:`<div class="panel"><p class="hint" style="margin:0">You don't own anything yet. Start on the <b>Deals</b> tab: cheap old motels and empty lots are where young investors begin. Your gaming license is already approved, so any casino you buy can take bets from day one.</p></div>`}
   ${lastInc?`<div class="panel"><h3>Last quarter's cash in and out</h3><div class="kv">${Object.entries(lastInc.dist).map(([id,v])=>`<div>${esc(P(id).name)}</div><div class="${v<0?'neg':'pos'}">${M(v)}</div>`).join('')||'<div>No distributions</div><div>—</div>'}${lastInc.other?`<div>Other</div><div class="${lastInc.other<0?'neg':'pos'}">${M(lastInc.other)}</div>`:''}<div>Loan interest</div><div class="neg">${M(-lastInc.interest)}</div></div></div>`:''}`;
 }
 function viewDeals(){
@@ -1083,7 +1085,7 @@ function viewCity(){
   return`<h2 class="sec">City Hall and the back rooms</h2>
   <div class="grid2">
   <div class="panel"><h3>Nevada Gaming Commission</h3><p style="margin:0 0 8px"><span class="chip ${lic[1]}">${lic[0]}</span></p>
-  <p class="hint">You need a gaming license before a casino you control can take a single bet. Approval takes two quarters and goes better when your heat is low.</p>
+  <p class="hint">You start with a gaming license: the Commission approved you before you came to town. Keep it. Without it, no casino you control can take a single bet, and winning it back takes two quarters and a clean record.</p>
   <button class="btn" data-a="license" ${canApply?'':'disabled'}><span>Apply for a gaming license<small>${S.licWait>0?`You can reapply in ${S.licWait} quarters`:'Background check and fees'}</small></span><span class="c">${M(.25*infl(S.t))}</span></button></div>
   <div class="panel"><h3>Gaming Control Board heat</h3>${meter('Scrutiny',S.heat,S.heat>55?'var(--bad)':'var(--gold)')}
   <p class="hint">Heat rises when you deal with the mob or cut corners, and falls slowly on its own. High heat brings audits, fines, suspensions and, at the extreme, losing your license.</p></div>
@@ -1273,7 +1275,7 @@ function showIntro(){
   ${saved?`<button class="btn primary" data-a="resume">Continue your career · ${dateStr(saved.t)}</button>`:''}
   <input type="text" id="pname" placeholder="Your name" value="${esc(saved?saved.name:'Jeff')}" maxlength="18">
   <button class="btn ${saved?'':'primary'}" data-a="start">${saved?'Start over':'Fly to Las Vegas'}</button>
-  <div class="panel"><h3>Getting started</h3><p class="hint" style="margin:0">1. Apply for a gaming license on the City tab. 2. Buy something cheap on the Deals tab. 3. Press Next quarter and see how it does. Tap any building on the skyline for its full numbers.</p></div>`);
+  <div class="panel"><h3>Getting started</h3><p class="hint" style="margin:0">1. Buy something cheap on the Deals tab: you already hold a gaming license. 2. Press Next quarter and see how it does. 3. Keep your heat low, or the Gaming Commission may suspend or revoke your license. Tap any building on the skyline for its full numbers.</p></div>`);
 }
 function showMenu(){
   openSheet(`<div class="sheet-head"><h2>Menu</h2><button class="iconbtn" data-a="close">✕</button></div>
@@ -1324,7 +1326,7 @@ document.addEventListener('click',e=>{
     case 'choice':choose(+k);break;
     case 'pendnext':showPending();break;
     case 'reviewdone':reviewDone();break;
-    case 'start':{const n=($('#pname')&&$('#pname').value.trim())||'Jeff';clearSave();newGame(n);tab='strip';closeSheet();render();save();toast('Welcome to Las Vegas. Start with a gaming license.');break;}
+    case 'start':{const n=($('#pname')&&$('#pname').value.trim())||'Jeff';clearSave();newGame(n);tab='strip';closeSheet();render();save();toast('Welcome to Las Vegas. Your gaming license is in your pocket.');break;}
     case 'resume':S=loadSave();closeSheet();render();if(S.report)openReport();else if(S.pending.length||S.over)showPending();break;
     case 'newgame':S=null;showIntro();break;
     case 'quit':clearSave();S=null;showIntro();break;
