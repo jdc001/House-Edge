@@ -154,7 +154,7 @@ input[type=text]{width:100%;background:var(--panel);border:1px solid var(--line)
 .logo-big{font-family:var(--display);color:var(--pink);font-size:40px;text-align:center;text-shadow:0 0 8px #ff3ea5aa,0 0 24px #ff3ea566;margin:6px 0 0;line-height:1.1}
 .lede{font-family:var(--serif);font-size:19px;text-align:center;color:#e9e4ff;margin:0}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-.ver{text-align:center;font-size:12px;letter-spacing:.08em;opacity:.55;margin:10px 0 4px}
+.ver{text-align:center;font-size:13px;letter-spacing:.1em;opacity:.75;margin:2px 0 8px}
 </style>
 </head>
 <body>
@@ -1272,13 +1272,12 @@ function showOver(){
 const APP_VERSION='0.2';
 function showIntro(){
   const saved=loadSave();
-  openSheet(`<div class="logo-big">HOUSE EDGE</div><p class="lede">Las Vegas, 1988.</p>
+  openSheet(`<div class="logo-big">HOUSE EDGE</div><p class="ver">Version ${APP_VERSION}</p><p class="lede">Las Vegas, 1988.</p>
   <p class="evt-text">You're a junior associate at Halloran Brothers, a New York merchant bank. The partners have sent you west with <b>$10 million</b> of the firm's money and a <b>$75 million</b> credit line. The old Strip is tired, the mob is on its way out, and something much bigger is about to be built.</p>
   <p class="evt-text">Buy tired motels and empty desert. Build resorts. Bring in investors. Take stakes in your rivals and take them over. Keep the Gaming Commission, the county and the Syndicate on side, or deal with the fallout. Your first review is in three years, then every two. Keep making money and you keep your job.</p>
   ${saved?`<button class="btn primary" data-a="resume">Continue your career · ${dateStr(saved.t)}</button>`:''}
   <input type="text" id="pname" placeholder="Your name" value="${esc(saved?saved.name:'Jeff')}" maxlength="18">
   <button class="btn ${saved?'':'primary'}" data-a="start">${saved?'Start over':'Fly to Las Vegas'}</button>
-  <p class="ver">Version ${APP_VERSION}</p>
   <div class="panel"><h3>Getting started</h3><p class="hint" style="margin:0">1. Buy something cheap on the Deals tab: you already hold a gaming license. 2. Press Next quarter and see how it does. 3. Keep your heat low, or the Gaming Commission may suspend or revoke your license. Tap any building on the skyline for its full numbers.</p></div>`);
 }
 function showMenu(){
