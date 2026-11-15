@@ -323,7 +323,9 @@ function clearSave(){try{localStorage.removeItem('houseedge-v1');}catch(e){}}
    ========================================================= */
 function macro(t){let m=1;for(const s of S.shocks){const k=t-s.s;if(k>=0&&k<s.len)m*=s.d+(1-s.d)*(k/s.len);}return m;}
 const prime=t=>lerpT(yf(t),PRIME);
-const loanRate=()=>prime(S.t)+2+S.rateAdd;
+const loanRate=()=>prime(S.t)+spread()+S.rateAdd;
+const spread=()=>S.spread==null?2:S.spread;
+const advRate=()=>S.adv==null?.5:S.adv;
 const houseIdx=t=>lerpT(yf(t),HOUSE);
 const landIdx=t=>lerpT(yf(t),LANDT)*(.85+.15*macro(t));
 const valMult=t=>5.5*(.8+.3*macro(t));
@@ -353,7 +355,45 @@ function val(p){
 }
 const stakesVal=()=>S.props.reduce((s,p)=>s+(p.shares.you||0)/100*val(p),0);
 const netWorth=()=>S.cash-S.loan+stakesVal();
-const creditLimit=()=>(TITLE_CREDIT[S.title]*infl(S.t)+.5*stakesVal())*S.creditBonus;
+const creditLimit=()=>(TITLE_CREDIT[S.title]*infl(S.t)+advRate()*stakesVal())*S.creditBonus;
+
+/* the bank's view of you: leverage, cash flow against interest, track record */
+function bankBook(){
+  const sv=stakesVal(),ltv=S.loan>0?S.loan/Math.max(1,sv):0,L=S.ledger.slice(-4);
+  const ops=L.reduce((a,x)=>a+Object.values(x.dist||{}).reduce((p,q)=>p+q,0)+(x.other||0),0)*(L.length?4/L.length:0);
+  const intYr=S.loan*loanRate()/100,cover=intYr>.01?ops/intYr:null,fcf=ops-intYr;
+  return{sv,ltv,ops,intYr,cover,fcf,n:L.length};
+}
+function bankScore(b){let s=0;const why=[];
+  const lt=b.sv<1?0:b.ltv<.3?1.2:b.ltv<.5?.6:b.ltv<.65?0:b.ltv<.8?-.6:-1.2;s+=lt;
+  const cv=b.cover==null?(b.ops>0?1:0):b.cover>=3?1:b.cover>=2?.5:b.cover>=1.3?0:b.cover>=1?-.5:-1;s+=cv;
+  s+=.15*S.title-.3*S.strikes+(S.conf>70?.2:S.conf<35?-.3:0)+(S.heat>55?-.4:0);
+  return{s,lt,cv};}
+function bankTerms(b,jit){const sc=bankScore(b).s;return{spread:clamp(Math.round((2.25-.45*sc+(jit||0))*4)/4,.75,4.5),adv:clamp(Math.round((.5+.05*sc)*20)/20,.35,.7)};}
+const BANK_GRADE=[[.3,'good','Strong'],[.5,'good','Good'],[.65,'','Fair'],[.8,'gold','Stretched'],[Infinity,'bad','Over-borrowed']];
+function negotiate(){
+  if(S.negQ!=null&&S.t-S.negQ<4)return;
+  const b=bankBook(),now={spread:spread(),adv:advRate()},o=bankTerms(b,(rnd()-.5)*.5);S.negQ=S.t;
+  const better=o.spread<now.spread||o.adv>now.adv,worse=o.spread>now.spread||o.adv<now.adv;
+  const lim=a=>(TITLE_CREDIT[S.title]*infl(S.t)+a*b.sv)*S.creditBonus;
+  const rate=sp=>(prime(S.t)+sp+S.rateAdd).toFixed(2)+'%';
+  const said=b.ltv<.5&&(b.cover==null||b.cover>=2)?'“Your numbers are strong. We want to keep your business.”':b.ltv>.65||(b.cover!=null&&b.cover<1.3)?'“Frankly, you’re carrying a lot of debt for what you earn.”':'“We can work with this.”';
+  pendingBank=o;
+  openSheet(`<div class="sheet-head"><h2>Meeting with your banker</h2><button class="iconbtn" data-a="close" aria-label="Close">✕</button></div>
+  <div class="panel"><p style="margin-top:0">${said}</p><div class="tscroll"><table class="ctable pl"><thead><tr><th></th><th>Now</th><th>Offered</th></tr></thead><tbody>
+  <tr><td>Rate over prime</td><td>+${now.spread.toFixed(2)}%</td><td class="${o.spread<now.spread?'pos':o.spread>now.spread?'neg':''}">+${o.spread.toFixed(2)}%</td></tr>
+  <tr><td>Your rate today</td><td>${rate(now.spread)}</td><td class="${o.spread<now.spread?'pos':o.spread>now.spread?'neg':''}">${rate(o.spread)}</td></tr>
+  <tr><td>Lends against your stakes</td><td>${Math.round(now.adv*100)}%</td><td class="${o.adv>now.adv?'pos':o.adv<now.adv?'neg':''}">${Math.round(o.adv*100)}%</td></tr>
+  <tr><td>Credit limit</td><td>${M(lim(now.adv))}</td><td class="${o.adv>now.adv?'pos':o.adv<now.adv?'neg':''}">${M(lim(o.adv))}</td></tr>
+  <tr class="tot"><td>Interest per year on today's loan</td><td>${M(S.loan*(prime(S.t)+now.spread+S.rateAdd)/100)}</td><td>${M(S.loan*(prime(S.t)+o.spread+S.rateAdd)/100)}</td></tr></tbody></table></div>
+  <p class="hint">${better&&!worse?(o.spread<now.spread&&o.adv>now.adv?'Better terms on both counts.':o.spread<now.spread?'A lower rate.':'A bigger credit line at the same rate.'):worse&&!better?'They want tougher terms. You can keep what you have.':better&&worse?'Better on one count, worse on the other.':'Same terms as today.'} You can meet the bank again in a year.</p></div>
+  <div class="btns"><button class="btn primary" data-a="bankok">Accept the new terms</button><button class="btn" data-a="close">Keep my current terms</button></div>`);
+}
+let pendingBank=null;
+// once a year the bank checks its covenants and reprices if you breach them
+function bankCovenant(rep){if(qOf(S.t)!==1||S.loan<=0)return;const b=bankBook();
+  if(b.ltv>.8||(b.cover!=null&&b.cover<1&&b.n>=4)){const o=bankTerms(b,0);if(o.spread>spread()||o.adv<advRate()){S.spread=Math.max(spread(),o.spread);S.adv=Math.min(advRate(),o.adv);
+    rep.push(`🏦 <b>Your bank reprices your loan.</b> ${b.ltv>.8?`You owe ${Math.round(b.ltv*100)}% of what your stakes are worth.`:`Your properties pay only ${b.cover.toFixed(1)}× your interest.`} New rate: prime + ${spread().toFixed(2)}%, lending against ${Math.round(advRate()*100)}% of your stakes.`);S.conf=clamp(S.conf-3,0,100);}}}
 const available=()=>Math.max(0,S.cash)+Math.max(0,creditLimit()-S.loan);
 function spend(amt){S.cash-=amt;if(S.cash<0){const d=Math.min(-S.cash,Math.max(0,creditLimit()-S.loan));S.loan+=d;S.cash+=d;}}
 function autoSet(p){
@@ -684,7 +724,7 @@ function nextQuarter(){
     else{const yld=r.hist.reduce((a,b)=>a+b,0)/r.hist.length*4/Math.max(1,r.paidIn);const tgt=(prime(t)+3)/100;r.mood=clamp(r.mood+((50+(yld-tgt)*300)-r.mood)*.35,0,100);}
     r.low=r.mood<25?r.low+1:0;}
   // interest
-  const intr=S.loan*loanRate()/400;S.qInc.interest=intr;basisInterest();spend(intr);
+  bankCovenant(rep);const intr=S.loan*loanRate()/400;S.qInc.interest=intr;basisInterest();spend(intr);
   // rivals
   for(const r of S.rivals){if(r.cash<0)r.cash-=-r.cash*(prime(t)+1.5)/400;}
   rivalAI(rivalNews);
@@ -1292,6 +1332,16 @@ function sparkline(){
   return`<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${reviews}<line x1="${pad}" x2="${W-pad}" y1="${Y(0)}" y2="${Y(0)}" stroke="#342c72"/><polygon points="${X(0)},${Y(mn)} ${pts} ${X(h.length-1)},${Y(mn)}" fill="#ffd31922"/><polyline points="${pts}" fill="none" stroke="#ffd319" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="${X(h.length-1)}" cy="${Y(last.nw)}" r="4" fill="#ffd319"/></svg>
   <div class="legend"><span>${dateStr(h[0].t)}: ${M(h[0].nw)}</span><span style="margin-left:auto">Now: <b style="color:var(--gold)">${M(last.nw)}</b></span></div>`;
 }
+function bankPanel(){const b=bankBook(),g=BANK_GRADE.find(x=>b.ltv<x[0]);
+  const cvc=b.cover==null?'good':b.cover>=2?'good':b.cover>=1.3?'':b.cover>=1?'gold':'bad';
+  const can=S.negQ==null||S.t-S.negQ>=4;
+  return`<h3 style="margin-top:14px">How the bank sees you</h3><div class="kv">
+  <div>Loan ÷ value of your stakes<small class="hint" style="display:block">Under 50% is comfortable. Over 80% breaks the bank's limit.</small></div><div><span class="chip ${g[1]}">${S.loan>0?Math.round(b.ltv*100)+'% · '+g[2]:'No loan'}</span></div>
+  <div>Cash from properties ÷ interest<small class="hint" style="display:block">Last 4 quarters, a year's interest at today's rate. 2× or more is solid. Under 1× breaks the limit.</small></div><div><span class="chip ${cvc}">${b.cover==null?'No interest':b.cover.toFixed(1)+'×'}</span></div>
+  <div>Free cash flow after interest, per year</div><div class="${b.fcf<0?'neg':'pos'}">${M(b.fcf)}</div>
+  <div>Track record</div><div>${TITLES[S.title]}${S.strikes?` · ${S.strikes} strike${S.strikes>1?'s':''}`:''}</div></div>
+  <p class="hint">Bring your debt down against your assets and earn more than you owe in interest, and the bank will cut your rate and lend you more. Get stretched and they reprice you each January.</p>
+  <button class="btn" data-a="negotiate" ${can?'':'disabled'}><span>Ask the bank for better terms<small>${can?'Once a year. They may offer worse terms, which you can turn down.':`Next meeting in ${4-(S.t-S.negQ)} quarters`}</small></span><span class="c">🏦</span></button>`;}
 function viewMoney(){
   const lim=creditLimit(),f=infl(S.t),ql=4*S.t%8;
   const nextRev=S.t<12?12-S.t:8-((S.t-12)%8);
@@ -1299,8 +1349,9 @@ function viewMoney(){
   return`<h2 class="sec">Money</h2>
   <div class="panel"><h3>Net worth</h3>${sparkline()}</div>
   <div class="panel"><h3>Next board review · ${dateStr(S.t+nextRev)}</h3><div class="kv"><div>Target net worth</div><div>${M(reviewTarget())}</div><div>Your 4-quarter average</div><div class="${reviewNW()>=reviewTarget()?'pos':'neg'}">${M(reviewNW())}</div><div>Strikes</div><div>${S.strikes} of 2</div></div><p class="hint" style="margin:8px 0 0">The partners judge your average net worth over the last four quarters, and ease the target in a downturn. Two misses in a row and you're fired. Beat it by 25% and you get promoted, with a bigger credit line.</p></div>
-  <div class="panel"><h3>Bank credit line</h3><div class="kv"><div>Credit limit</div><div>${M(lim)}</div><div>Drawn</div><div>${M(S.loan)}</div><div>Interest rate</div><div>${loanRate().toFixed(2)}%</div><div>Interest per quarter</div><div class="neg">${M(-S.loan*loanRate()/400)}</div></div>
-  <p class="hint">Your limit is a base set by your title plus half the value of your stakes. If the loan ever exceeds it, the bank forces a sale.</p>
+  <div class="panel"><h3>Bank credit line</h3><div class="kv"><div>Credit limit</div><div>${M(lim)}</div><div>Drawn</div><div>${M(S.loan)}</div><div>Interest rate</div><div>${loanRate().toFixed(2)}% <small class="hint">prime ${prime(S.t).toFixed(2)} + ${(spread()+S.rateAdd).toFixed(2)}</small></div><div>Interest per quarter</div><div class="neg">${M(-S.loan*loanRate()/400)}</div></div>
+  <p class="hint">Your limit is a base set by your title plus ${Math.round(advRate()*100)}% of the value of your stakes. If the loan ever exceeds it, the bank forces a sale.</p>
+  ${bankPanel()}
   <div class="row"><button class="btn" data-a="draw" data-k="10"><span>Draw</span><span class="c">${M(10)}</span></button><button class="btn" data-a="draw" data-k="50"><span>Draw</span><span class="c">${M(50)}</span></button><button class="btn" data-a="repay" data-k="10" ${S.loan<=0||S.cash<=0?'disabled':''}><span>Repay</span><span class="c">${M(10)}</span></button><button class="btn" data-a="repay" data-k="all" ${S.loan<=0||S.cash<=0?'disabled':''}><span>Repay all you can</span><span class="c">${M(Math.min(S.cash,S.loan))}</span></button></div></div>
   <div class="panel"><h3>Your investors</h3>${invs.length?`<div class="list">${invs.map(([id,r])=>{const p=P(id);const yl=r.hist.length?r.hist.reduce((a,b)=>a+b,0)/r.hist.length*4/Math.max(1,r.paidIn)*100:0;const face=r.mood>65?'😀':r.mood>40?'🙂':r.mood>25?'😐':'😠';return`<div class="li"><span style="font-size:22px">${face}</span><div class="grow"><b>${esc(p.name)}</b><small>${p.shares.inv.toFixed(0)}% stake · paid in ${M(r.paidIn)} · yield ${yl.toFixed(1)}%/yr</small></div><button class="btn" style="width:auto" data-a="buyback" data-id="${id}"><span>Buy out</span><span class="c">${M(buybackPrice(p,p.shares.inv))}</span></button></div>`;}).join('')}</div>`:'<p class="hint" style="margin:0">None yet. Sell stakes in properties you control to outside investors to raise money without losing control. They expect a yield of about '+(prime(S.t)+3).toFixed(0)+'% a year and get angry when they don\'t see it.</p>'}</div>`;
 }
@@ -1523,7 +1574,7 @@ function showOver(){
 
 /* ---------- intro & menu ---------- */
 // bump with every release, so a player can say which build they are on
-const APP_VERSION='0.4.1';
+const APP_VERSION='0.5';
 function showIntro(){
   const saved=loadSave();
   openSheet(`<div class="logo-big">HOUSE EDGE</div><p class="ver">Version ${APP_VERSION}</p><p class="lede">Las Vegas, 1988.</p>
@@ -1582,6 +1633,8 @@ document.addEventListener('click',e=>{
     case 'license':{const c=.25*infl(S.t);spend(c);S.license='pending';S.licQ=2;toast('Application filed. Decision in two quarters.');save();render();break;}
     case 'donate':{const c=1.5*infl(S.t);if(c>available()){toast('Not enough cash.');break;}spend(c);S.city=clamp(S.city+10,0,100);S.donQ=S.t;toast('The county commissioners send their thanks.');save();render();break;}
     case 'mob':{if(k==='respect'){const c=1*infl(S.t);spend(c);S.mob=clamp(S.mob+20,-100,100);S.heat=clamp(S.heat+5,0,100);toast('Your gift is received.');}else{S.mob=clamp(S.mob-8,-100,100);S.heat=clamp(S.heat-2,0,100);toast('You keep things strictly legitimate.');}S.mobQ=S.t;save();render();break;}
+    case 'negotiate':negotiate();break;
+    case 'bankok':{if(pendingBank){S.spread=pendingBank.spread;S.adv=pendingBank.adv;pendingBank=null;toast('New terms signed.');}save();closeSheet();render();break;}
     case 'draw':{const amt=Math.min(+k,Math.max(0,creditLimit()-S.loan));if(amt<=0){toast('Your credit line is maxed out.');break;}S.loan+=amt;S.cash+=amt;save();render();break;}
     case 'repay':{const amt=k==='all'?Math.min(S.cash,S.loan):Math.min(+k,S.cash,S.loan);S.loan-=amt;S.cash-=amt;save();render();break;}
     case 'reportdone':S.report=null;save();if(S.pending.length||S.over)showPending();else closeSheet();render();break;
