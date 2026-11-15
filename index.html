@@ -155,6 +155,25 @@ input[type=text]{width:100%;background:var(--panel);border:1px solid var(--line)
 .lede{font-family:var(--serif);font-size:19px;text-align:center;color:#e9e4ff;margin:0}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .ver{text-align:center;font-size:13px;letter-spacing:.1em;opacity:.75;margin:2px 0 8px}
+/* results tables */
+.tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px}
+.ctable{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums}
+.ctable th{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--mute);font-weight:600;text-align:right;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.ctable td{text-align:right;padding:7px 8px;border-bottom:1px solid #2a2360;white-space:nowrap;vertical-align:middle}
+.ctable th:first-child,.ctable td:first-child{text-align:left;position:sticky;left:0;background:var(--panel);z-index:1}
+.ctable td:first-child small{display:block;color:var(--mute);font-size:10.5px;margin-top:2px;white-space:normal;max-width:180px}
+.ctable tfoot td,.ctable tr.tot td{font-weight:700;color:var(--text);border-top:1px solid var(--line)}
+.ctable tbody tr[data-a]{cursor:pointer}
+.ctable tbody tr[data-a]:hover td{background:#211b4f}
+.ctable.cmp th[data-a]{cursor:pointer}
+.ctable.cmp th.on{color:var(--gold)}
+.ctable.cmp tr.mine td:first-child{box-shadow:inset 3px 0 0 var(--gold)}
+.ctable.pl td:first-child{color:var(--mute)}
+.ctable.pl tr.tot td:first-child{color:var(--text)}
+.ctable .gold{color:var(--gold)}
+.ctable.cmp td:first-child{white-space:normal;min-width:130px;max-width:170px}
+.ctable.pl td:first-child{white-space:normal;min-width:96px}
+@media (max-width:520px){.ctable{font-size:11.5px}.ctable th{font-size:9.5px;letter-spacing:.3px;padding:6px 5px}.ctable td{padding:6px 5px}.ctable.cmp td:first-child{min-width:112px;max-width:132px}.ctable.cmp td:first-child b{font-size:12px}.ctable.pl td:first-child{min-width:84px;max-width:110px}}
 </style>
 </head>
 <body>
@@ -254,7 +273,7 @@ const P=id=>S.props.find(p=>p.id===id);
 /* =========================================================
    STATE
    ========================================================= */
-let S=null, tab='strip', dealFilter='all', design=null, busy=false;
+let S=null, tab='strip', dealFilter='all', design=null, busy=false, dealView='cards', dealSort={k:'net4',d:-1}, ledgerPer='y', propPer='q';
 
 function mkProp(id,name,loc,acres,ord,spec,shares){
   const p={id,name,loc,acres,ord,status:spec?'op':'lot',built:spec?spec.built:null,opened:spec?spec.built:null,rooms:0,q:0,theme:null,cond:0,am:[],floor:0,mix:'bal',games:[],auto:true,set:null,shares,ttm:[],last:null,project:null,book:0,boost:null,disrupt:1,buzz:0,chef:false};
@@ -285,15 +304,17 @@ function newGame(name){
   S={v:1,name,t:0,cash:10,loan:0,creditBonus:1,rateAdd:0,title:0,conf:60,heat:5,city:40,mob:0,rep:50,wage:1,
     license:'licensed',licQ:0,licWait:0,strikes:0,target:13,lastReviewNW:10,skim:null,trend:1,
     props,rivals:RIVALS.map(r=>({...r})),inv:{},hist:[],log:[],pending:[],shocks,
-    qInc:null,report:null,over:null,donQ:-1,mobQ:-1,lastEvt:{},nwPrev:5,fireRisk:{}};
+    qInc:null,report:null,over:null,donQ:-1,mobQ:-1,lastEvt:{},nwPrev:5,fireRisk:{},ledger:[],flow:{capex:0,buy:0,sell:0}};
   S.D0=props.filter(p=>p.status==='op').reduce((s,p)=>s+p.rooms,0)*91*.86;
-  simulateMarket(true);
+  simulateMarket(true);seedHistory();
   S.hist.push({t:0,nw:netWorth(),cash:S.cash,loan:S.loan});S.nwPrev=netWorth();
 }
 function save(){try{localStorage.setItem('houseedge-v1',JSON.stringify(S));}catch(e){}}
 function loadSave(){try{const s=localStorage.getItem('houseedge-v1');const o=s?JSON.parse(s):null;
   // games saved before the license came with you: an investor who never lost it holds it now
-  if(o&&o.license==='none'&&!o.licWait)o.license='licensed';return o;}catch(e){return null;}}
+  if(o&&o.license==='none'&&!o.licWait)o.license='licensed';
+  if(o){o.ledger=o.ledger||[];o.flow=o.flow||{capex:0,buy:0,sell:0};for(const p of o.props)p.qh=p.qh||[];}
+  return o;}catch(e){return null;}}
 function clearSave(){try{localStorage.removeItem('houseedge-v1');}catch(e){}}
 
 /* =========================================================
@@ -420,10 +441,61 @@ function simulateMarket(dry){
   }
 }
 
+
+/* =========================================================
+   RESULTS: every hotel's quarters, kept for comparison
+   ========================================================= */
+// one row per quarter: t, four revenue streams, eight cost lines, net income, and what was paid to you
+const QI={t:0,rooms:1,gaming:2,fb:3,other:4,cRooms:5,cCasino:6,cTax:7,cComps:8,cFb:9,cMkt:10,cUpk:11,cMgmt:12,net:13,you:14};
+const REV_LINES=[['rooms','Rooms','#2de2e6'],['gaming','Casino win','#ff3ea5'],['fb','Food & drink','#ffd319'],['other','Retail & events','#b388ff']];
+const COST_LINES=[['cRooms','Hotel operations'],['cCasino','Casino operations'],['cTax','Gaming tax (6.75%)'],['cComps','Comps'],['cFb','Food & drink costs'],['cMkt','Marketing'],['cUpk','Upkeep & property tax'],['cMgmt',"Manager's fee"]];
+const r2=v=>Math.round(v*100)/100;
+function qRow(l,t,you){const c=l.cost;return[t,r2(l.rev.rooms),r2(l.rev.gaming),r2(l.rev.fb),r2(l.rev.other),r2(c.rooms),r2(c.casino),r2(c.tax),r2(c.comps),r2(c.fb),r2(c.marketing),r2(c.upkeep),r2(c.mgmt),r2(l.ebitda),r2(you)];}
+function recordQuarter(p,t,you){(p.qh=p.qh||[]).push(qRow(p.last,t,you));}
+// the old hotels arrive with two years of books, so they can be compared from the first day
+function seedHistory(){
+  for(const p of S.props){p.qh=[];if(p.status!=='op'||!p.last)continue;const rnd2=hash(p.id+'books');
+    for(let k=8;k>=1;k--){const f=Math.pow(1.03,-k/4)*Math.pow(1.05,-k/4)*(.9+rnd2()*.14),cf=Math.pow(1.03,-k/4)*(.97+rnd2()*.06);const row=qRow(p.last,-k,0);
+      for(let i=1;i<=4;i++)row[i]=r2(row[i]*f);for(let i=5;i<=12;i++)row[i]=r2(row[i]*cf);row[13]=r2(row.slice(1,5).reduce((a,b)=>a+b,0)-row.slice(5,13).reduce((a,b)=>a+b,0));p.qh.push(row);}}
+}
+function addFlow(k,amt){const o=busy&&S.qInc?S.qInc:S.flow;o[k]=(o[k]||0)+amt;}
+// sum a run of quarters; rev, cost and net come out as totals
+function sumQ(rows){const s=Array(15).fill(0);for(const r of rows)for(let i=1;i<15;i++)s[i]+=r[i];s.rev=s[1]+s[2]+s[3]+s[4];s.cost=s.slice(5,13).reduce((a,b)=>a+b,0);s.net=s[13];s.n=rows.length;return s;}
+const PERIODS={q:'This quarter',y:'This year',y5:'Last 5 years',all:'All time',fc:'Next 4 quarters'};
+function rowsFor(p,per){const h=p.qh||[];if(!h.length)return[];
+  if(per==='q')return h.slice(-1);if(per==='y'){const y=yrOf(S.t);return h.filter(r=>yrOf(r[0])===y);}
+  if(per==='y5')return h.slice(-20);if(per==='4q')return h.slice(-4);if(per==='p4q')return h.slice(-8,-4);return h;}
+// a straight-line trend through the last eight quarters, carried four quarters forward, line by line
+function forecastQ(p){const h=(p.qh||[]).slice(-8);if(h.length<2||p.status!=='op')return null;const n=h.length,out=Array(15).fill(0);
+  for(let i=1;i<14;i++){let sx=0,sy=0,sxy=0,sxx=0;h.forEach((r,j)=>{sx+=j;sy+=r[i];sxy+=j*r[i];sxx+=j*j;});const b=(n*sxy-sx*sy)/Math.max(1e-9,n*sxx-sx*sx),a=(sy-b*sx)/n;
+    for(let k=n;k<n+4;k++)out[i]+=Math.max(i===13?-1e9:0,a+b*k);}
+  out[13]=out[1]+out[2]+out[3]+out[4]-out.slice(5,13).reduce((a,b)=>a+b,0);out[14]=out[13]*.85*(p.shares.you||0)/100;
+  out.rev=out[1]+out[2]+out[3]+out[4];out.cost=out.slice(5,13).reduce((a,b)=>a+b,0);out.net=out[13];out.n=4;out.fc=true;return out;}
+function periodSum(p,per){return per==='fc'?forecastQ(p):sumQ(rowsFor(p,per));}
+function addSums(list){const s=Array(15).fill(0);for(const x of list)if(x)for(let i=1;i<15;i++)s[i]+=x[i];s.rev=s[1]+s[2]+s[3]+s[4];s.cost=s.slice(5,13).reduce((a,b)=>a+b,0);s.net=s[13];return s;}
+const pct=(a,b)=>b?Math.round(a/b*100):0;
+const delta=(now,before)=>before>0.05?Math.round((now-before)/Math.abs(before)*100):null;
+function mixBar(s,h){const tot=s.rev||1;return`<div class="mix" style="height:${h||8}px;margin:0">${REV_LINES.map(([k,,c])=>`<i style="width:${s[QI[k]]/tot*100}%;background:${c}"></i>`).join('')}</div>`;}
+function trendLine(vals,w,h,col){if(vals.length<2)return'<span class="hint">—</span>';w=w||90;h=h||24;const mn=Math.min(0,...vals),mx=Math.max(...vals,.01);const X=i=>2+i*(w-4)/(vals.length-1),Y=v=>h-2-(v-mn)/(mx-mn||1)*(h-4);
+  return`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block">${mn<0?`<line x1="0" x2="${w}" y1="${Y(0)}" y2="${Y(0)}" stroke="#4d457f" stroke-dasharray="2 2"/>`:''}<polyline points="${vals.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${col||'#ffd319'}" stroke-width="1.6"/><circle cx="${X(vals.length-1)}" cy="${Y(vals[vals.length-1])}" r="2.4" fill="${col||'#ffd319'}"/></svg>`;}
+// quarters as stacked revenue bars with net income drawn over them
+function resultsChart(rowsList,label){
+  const byT={};for(const rows of rowsList)for(const r of rows){const o=byT[r[0]]=byT[r[0]]||Array(15).fill(0);for(let i=1;i<15;i++)o[i]+=r[i];}
+  const ts=Object.keys(byT).map(Number).sort((a,b)=>a-b).slice(-12);if(ts.length<2)return'<p class="hint">The chart fills in as the quarters go by.</p>';
+  const W=600,H=150,pb=18,pt=8,bw=(W-20)/ts.length;const rev=ts.map(t=>byT[t][1]+byT[t][2]+byT[t][3]+byT[t][4]),net=ts.map(t=>byT[t][13]);
+  const mx=Math.max(...rev,.1),mn=Math.min(0,...net);const Y=v=>pt+(mx-v)/(mx-mn)*(H-pb-pt);
+  let bars='';ts.forEach((t,i)=>{let y0=Y(0);for(const [k,,c] of REV_LINES){const v=byT[t][QI[k]];const y1=Y(v)-(Y(0)-y0);bars+=`<rect x="${10+i*bw+bw*.15}" y="${y1.toFixed(1)}" width="${bw*.7}" height="${Math.max(0,y0-y1).toFixed(1)}" fill="${c}" opacity=".75"/>`;y0=y1;}
+    if((((t%4)+4)%4===0)||i===0)bars+=`<text x="${10+i*bw+bw/2}" y="${H-4}" text-anchor="middle" font-size="10" fill="#a69fd6">${t<0?"'"+String(yrOf(t)).slice(2):yrOf(t)}</text>`;});
+  const pts=net.map((v,i)=>`${(10+i*bw+bw/2).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+  return`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block"><line x1="10" x2="${W-10}" y1="${Y(0)}" y2="${Y(0)}" stroke="#4d457f"/>${bars}<polyline points="${pts}" fill="none" stroke="#fff" stroke-width="2.2"/>${net.map((v,i)=>`<circle cx="${(10+i*bw+bw/2).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="3" fill="${v<0?'#ff5e6c':'#fff'}"/>`).join('')}</svg>
+  <div class="legend">${REV_LINES.map(([,n,c])=>`<span><i class="sw" style="background:${c}"></i>${n}</span>`).join('')}<span><i class="sw" style="background:#fff"></i>Net income</span>${label?`<span style="margin-left:auto">${label}</span>`:''}</div>`;
+}
+const perSeg=(cur,act,keys)=>`<div class="seg">${(keys||Object.keys(PERIODS)).map(k=>`<button class="${cur===k?'on':''}" data-a="${act}" data-k="${k}">${PERIODS[k].replace('Next 4 quarters','Forecast')}</button>`).join('')}</div>`;
+
 /* ownership & money flows */
 function payOwners(p,cost){
   for(const k in p.shares){const amt=cost*p.shares[k]/100;if(!amt)continue;
-    if(k==='you')spend(amt);else if(k==='inv'){invRec(p).paidIn+=amt;}else if(k!=='pub')RIV(k).cash-=amt;}
+    if(k==='you'){spend(amt);addFlow('capex',amt);}else if(k==='inv'){invRec(p).paidIn+=amt;}else if(k!=='pub')RIV(k).cash-=amt;}
   p.book+=cost;
 }
 function distribute(p,amt){
@@ -503,7 +575,7 @@ function nextQuarter(){
   if(S.pending.length){showPending();return;}
   busy=true;
   const rep=[],news=[],rivalNews=[];
-  S.qInc={dist:{},interest:0,other:0};
+  S.qInc={dist:{},interest:0,other:0,capex:S.flow.capex||0,buy:S.flow.buy||0,sell:S.flow.sell||0};S.flow={capex:0,buy:0,sell:0};
   const nw0=netWorth();
   S.t++;
   const t=S.t,y=yrOf(t);
@@ -518,7 +590,7 @@ function nextQuarter(){
   // decay
   for(const p of S.props){if(p.status==='op')p.cond=clamp(p.cond-(p.set.staff==='lean'?1.1:.85),5,100);}
   simulateMarket(false);
-  for(const p of S.props){p.disrupt=1;if(p.status==='op'&&p.last)distribute(p,p.last.ebitda*.85);}
+  for(const p of S.props){p.disrupt=1;if(p.status==='op'&&p.last){distribute(p,p.last.ebitda*.85);recordQuarter(p,t,S.qInc.dist[p.id]||0);}}
   // skim
   if(S.skim){const p=P(S.skim.p);if(p&&p.status==='op'&&mine(p)){const amt=(.4+(p.last?p.last.rev.gaming:0)*.03);S.cash+=amt;S.qInc.other+=amt;S.heat=clamp(S.heat+6,0,100);}S.skim.q--;if(S.skim.q<=0){S.skim=null;rep.push('The arrangement in the count room quietly ends.');}}
   // investors
@@ -546,7 +618,7 @@ function nextQuarter(){
   S.conf=clamp(S.conf+dc+(60-S.conf)*.03,0,100);
   S.city=clamp(S.city+(40-S.city)*.03,0,100);S.mob*=.96;S.heat=clamp(S.heat-2,0,100);S.rep=clamp(S.rep+(50-S.rep)*.02,0,100);
   S.hist.push({t,nw,cash:S.cash,loan:S.loan});
-  S.report={t,rep,news,rivalNews,inc:S.qInc,nw,nw0};S.lastInc=S.qInc;
+  S.report={t,rep,news,rivalNews,inc:S.qInc,nw,nw0};S.lastInc=S.qInc;S.qInc.t=t;S.ledger.push(S.qInc);
   // events
   drawEvents();
   if(t>=12&&(t-12)%8===0)S.pending.push({kind:'review'});
@@ -728,15 +800,15 @@ function drawEvents(){
 function buyStake(p,from,pct){
   pct=Math.min(pct,p.shares[from]||0);if(pct<=0)return;
   const pr=buyPrice(p,from,pct);if(pr>available()+1e-6){toast(`You need ${M(pr)} but only have ${M(available())} in cash and credit.`);return;}
-  const wasMine=mine(p);spend(pr);move(p,from,'you',pct);
+  const wasMine=mine(p);spend(pr);addFlow('buy',pr);move(p,from,'you',pct);
   if(from!=='pub')RIV(from).cash+=pr;
   toast(`You bought ${pct.toFixed(0)}% of ${p.name} for ${M(pr)}.`);
   if(!wasMine&&mine(p)){p.auto=true;toast(`You now control ${p.name}.${S.license!=='licensed'&&p.floor?' Its casino is dark until you hold a gaming license.':''}`);}
   save();render();openProp(p.id);
 }
-function sellInv(p,pct){if(!canSellInv(p,pct))return;const pr=sellInvPrice(p,pct);move(p,'you','inv',pct);S.cash+=pr;invRec(p).paidIn+=pr;toast(`Your investors paid ${M(pr)} for ${pct}% of ${p.name}.`);save();render();openProp(p.id);}
-function sellMkt(p,pct){pct=Math.min(pct,p.shares.you||0);const pr=sellMktPrice(p,pct);move(p,'you','pub',pct);S.cash+=pr;toast(`You sold ${pct.toFixed(0)}% of ${p.name} for ${M(pr)}.`);save();render();openProp(p.id);}
-function buyback(p){const pct=p.shares.inv||0;const pr=buybackPrice(p,pct);if(pr>available()){toast('Not enough cash and credit.');return;}spend(pr);move(p,'inv','you',pct);delete S.inv[p.id];toast(`You bought out your investors in ${p.name}.`);save();render();}
+function sellInv(p,pct){if(!canSellInv(p,pct))return;const pr=sellInvPrice(p,pct);move(p,'you','inv',pct);S.cash+=pr;addFlow('sell',pr);invRec(p).paidIn+=pr;toast(`Your investors paid ${M(pr)} for ${pct}% of ${p.name}.`);save();render();openProp(p.id);}
+function sellMkt(p,pct){pct=Math.min(pct,p.shares.you||0);const pr=sellMktPrice(p,pct);move(p,'you','pub',pct);S.cash+=pr;addFlow('sell',pr);toast(`You sold ${pct.toFixed(0)}% of ${p.name} for ${M(pr)}.`);save();render();openProp(p.id);}
+function buyback(p){const pct=p.shares.inv||0;const pr=buybackPrice(p,pct);if(pr>available()){toast('Not enough cash and credit.');return;}spend(pr);addFlow('buy',pr);move(p,'inv','you',pct);delete S.inv[p.id];toast(`You bought out your investors in ${p.name}.`);save();render();}
 
 /* =========================================================
    RENDER: HUD, TABS
@@ -1061,12 +1133,31 @@ function viewStrip(){
 }
 function viewHold(){
   const h=S.props.filter(p=>(p.shares.you||0)>0||(p.shares.inv||0)>0);
-  const lastInc=S.lastInc||null;
-  return`<h2 class="sec">Your holdings</h2>
+  const per=ledgerPer,sums=h.map(p=>periodSum(p,per)),tot=addSums(sums),fc=per==='fc';
+  const youOf=(p,x)=>!x?0:fc?x[QI.you]:x[QI.you];
+  const nQ=per==='q'?1:fc?4:Math.max(1,...sums.map(x=>x?x.n||0:0));
+  const rows=h.map((p,i)=>{const x=sums[i];if(!x||(!x.n&&!x.fc))return`<tr><td>${esc(p.name)}<small>${p.status==='op'?'no results yet':statusLine(p)}</small></td><td>—</td><td>—</td><td>—</td><td>—</td><td>${(p.shares.you||0).toFixed(0)}%</td><td>—</td></tr>`;
+    return`<tr data-a="prop" data-id="${p.id}"><td>${esc(p.name)}<small>${mixBar(x,5)}</small></td><td>${M(x.rev)}</td><td class="neg">${M(-x.cost)}</td><td class="${x.net<0?'neg':'pos'}">${M(x.net)}</td><td>${pct(x.net,x.rev)}%</td><td>${(p.shares.you||0).toFixed(0)}%</td><td style="color:var(--gold)">${M(youOf(p,x))}</td></tr>`;}).join('');
+  const L=ledgerSum(per);
+  return`<h2 class="sec">Income statement</h2>
   <div class="panel"><div class="kv"><div>Stakes at market value</div><div>${M(stakesVal())}</div><div>Cash</div><div>${M(S.cash)}</div><div>Bank loan</div><div class="neg">${M(-S.loan)}</div><div class="tot">Net worth</div><div class="tot">${M(netWorth())}</div></div></div>
-  ${h.length?`<div class="cards">${h.map(pcard).join('')}</div>`:`<div class="panel"><p class="hint" style="margin:0">You don't own anything yet. Start on the <b>Deals</b> tab: cheap old motels and empty lots are where young investors begin. Your gaming license is already approved, so any casino you buy can take bets from day one.</p></div>`}
-  ${lastInc?`<div class="panel"><h3>Last quarter's cash in and out</h3><div class="kv">${Object.entries(lastInc.dist).map(([id,v])=>`<div>${esc(P(id).name)}</div><div class="${v<0?'neg':'pos'}">${M(v)}</div>`).join('')||'<div>No distributions</div><div>—</div>'}${lastInc.other?`<div>Other</div><div class="${lastInc.other<0?'neg':'pos'}">${M(lastInc.other)}</div>`:''}<div>Loan interest</div><div class="neg">${M(-lastInc.interest)}</div></div></div>`:''}`;
+  ${perSeg(per,'lper')}
+  ${h.length?`<div class="panel"><h3>Your properties · ${PERIODS[per].toLowerCase()}${fc?' (if the trend of the last two years holds)':''}</h3>
+    <div class="tscroll"><table class="ctable"><thead><tr><th>Property</th><th>Revenue</th><th>Expenses</th><th>Net income</th><th>Margin</th><th>Your stake</th><th>${fc?'Your share':'Paid to you'}</th></tr></thead>
+    <tbody>${rows}</tbody><tfoot><tr><td>All together</td><td>${M(tot.rev)}</td><td class="neg">${M(-tot.cost)}</td><td class="${tot.net<0?'neg':'pos'}">${M(tot.net)}</td><td>${pct(tot.net,tot.rev)}%</td><td></td><td style="color:var(--gold)">${M(tot[QI.you])}</td></tr></tfoot></table></div>
+    <p class="hint">Whole-property figures. Owners are paid 85% of net income each quarter in proportion to their stake; losses become capital calls.${per!=='q'&&!fc?' Stakes shown are today\'s; what was paid to you reflects the stake you held at the time.':''}</p>
+    <h3 style="margin-top:12px">The last twelve quarters, these properties together</h3>${resultsChart(h.map(p=>p.qh||[]))}</div>`
+  :`<div class="panel"><p class="hint" style="margin:0">You don't own anything yet. Start on the <b>Deals</b> tab, where the Compare view lines up every property's results side by side. Cheap old motels and empty lots are where young investors begin.</p></div>`}
+  <div class="panel"><h3>Your own cash · ${PERIODS[per].toLowerCase()}</h3>${fc?`<div class="kv"><div>Payouts, if trends hold</div><div class="pos">${M(tot[QI.you])}</div><div>Loan interest at today's rate</div><div class="neg">${M(-S.loan*loanRate()/100)}</div><div class="tot">Net</div><div class="tot">${M(tot[QI.you]-S.loan*loanRate()/100)}</div></div>`
+    :`<div class="kv"><div>Payouts from properties</div><div class="${L.dist<0?'neg':'pos'}">${M(L.dist)}</div>${L.other?`<div>Other income and costs</div><div class="${L.other<0?'neg':'pos'}">${M(L.other)}</div>`:''}<div>Loan interest</div><div class="neg">${M(-L.interest)}</div><div class="tot">Operating cash</div><div class="tot ${L.op<0?'neg':'pos'}">${M(L.op)}</div>
+    <div>Invested in building and renovating</div><div class="neg">${M(-L.capex)}</div><div>Stakes bought</div><div class="neg">${M(-L.buy)}</div><div>Stakes sold</div><div class="pos">${M(L.sell)}</div><div class="tot">Net cash flow</div><div class="tot ${L.net<0?'neg':'pos'}">${M(L.net)}</div></div>`}</div>
+  ${h.length?`<div class="cards">${h.map(pcard).join('')}</div>`:''}`;
 }
+// your own quarters: payouts, interest, events, investment and trading
+function ledgerSum(per){const L=S.ledger||[];let rows=L;const y=yrOf(S.t);
+  if(per==='q')rows=L.slice(-1);else if(per==='y')rows=L.filter(x=>yrOf(x.t)===y);else if(per==='y5')rows=L.slice(-20);
+  const o={dist:0,other:0,interest:0,capex:0,buy:0,sell:0};for(const x of rows){o.dist+=Object.values(x.dist||{}).reduce((a,b)=>a+b,0);o.other+=x.other||0;o.interest+=x.interest||0;o.capex+=x.capex||0;o.buy+=x.buy||0;o.sell+=x.sell||0;}
+  o.op=o.dist+o.other-o.interest;o.net=o.op-o.capex-o.buy+o.sell;return o;}
 function viewDeals(){
   const F={all:'All',sale:'Open market',lots:'Empty lots',rivals:'Rival-run',mine:'Mine'};
   let list=[...S.props];
@@ -1075,9 +1166,14 @@ function viewDeals(){
   if(dealFilter==='rivals')list=list.filter(p=>S.rivals.some(r=>r.id===ctrl(p)));
   if(dealFilter==='mine')list=list.filter(p=>mine(p));
   list.sort((a,b)=>val(a)-val(b));
+  if(dealView==='table')return dealsHead(F)+compareTable(list);
+  return dealsHead(F)+`<div class="cards">${list.map(pcard).join('')||'<p class="hint">Nothing here right now.</p>'}</div>`;
+}
+function dealsHead(F){
   return`<h2 class="sec">Deals</h2><p class="hint" style="margin:0">Buying from outside shareholders costs a 5% premium. Rivals want 25% or more, and a lot more if you're taking control from them. You have <b>${M(available())}</b> in cash and credit.</p>
+  <div class="seg" style="max-width:340px"><button class="${dealView==='cards'?'on':''}" data-a="dview" data-k="cards">Cards</button><button class="${dealView==='table'?'on':''}" data-a="dview" data-k="table">Compare</button></div>
   <div class="filters">${Object.entries(F).map(([k,l])=>`<button class="${dealFilter===k?'on':''}" data-a="filter" data-k="${k}">${l}</button>`).join('')}</div>
-  <div class="cards">${list.map(pcard).join('')||'<p class="hint">Nothing here right now.</p>'}</div>`;
+`;
 }
 function viewCity(){
   const lic={none:['Not licensed','bad'],pending:[`Under review · ${S.licQ}q`,'cyan'],licensed:['Licensed','good'],suspended:[`Suspended · ${S.licQ}q`,'bad'],revoked:['Revoked','bad']}[S.license];
@@ -1097,7 +1193,7 @@ function viewCity(){
   <div class="btns"><button class="btn" data-a="mob" data-k="respect" ${S.mobQ===S.t?'disabled':''}><span>Pay your respects<small>Calms them down. Adds heat.</small></span><span class="c">${M(1*infl(S.t))}</span></button>
   <button class="btn" data-a="mob" data-k="distance" ${S.mobQ===S.t?'disabled':''}><span>Keep your distance<small>Lowers heat a little. They notice.</small></span><span class="c">Free</span></button></div></div>
   </div>
-  <div class="panel"><h3>The economy</h3><div class="kv"><div>Visitor demand vs 1988</div><div>${Math.round(demand(S.t)/S.D0*100)}%</div><div>Demand vs rooms, incl. under construction</div><div class="${marketRatio(0)<.85?'neg':marketRatio(0)>1?'pos':''}">${Math.round(marketRatio(0)*100)}%</div><div>Prime rate</div><div>${prime(S.t).toFixed(2)}%</div><div>Your borrowing rate</div><div>${loanRate().toFixed(2)}%</div><div>Strip land prices vs 1988</div><div>${landIdx(S.t).toFixed(2)}×</div><div>Condo prices vs 1988</div><div>${houseIdx(S.t).toFixed(2)}×</div><div>Valuation multiple</div><div>${valMult(S.t).toFixed(1)}× EBITDA</div></div></div>
+  <div class="panel"><h3>The economy</h3><div class="kv"><div>Visitor demand vs 1988</div><div>${Math.round(demand(S.t)/S.D0*100)}%</div><div>Demand vs rooms, incl. under construction</div><div class="${marketRatio(0)<.85?'neg':marketRatio(0)>1?'pos':''}">${Math.round(marketRatio(0)*100)}%</div><div>Prime rate</div><div>${prime(S.t).toFixed(2)}%</div><div>Your borrowing rate</div><div>${loanRate().toFixed(2)}%</div><div>Strip land prices vs 1988</div><div>${landIdx(S.t).toFixed(2)}×</div><div>Condo prices vs 1988</div><div>${houseIdx(S.t).toFixed(2)}×</div><div>Valuation multiple</div><div>${valMult(S.t).toFixed(1)}× net income</div></div></div>
   <div class="panel"><h3>Rival companies</h3><div class="list">${S.rivals.map(r=>{const c=S.props.filter(p=>ctrl(p)===r.id);return`<div class="li"><i class="sw" style="background:${r.c};width:10px;height:10px"></i><div class="grow"><b>${r.n}</b><small>${c.map(p=>esc(p.name)).join(', ')||'No properties'}</small></div><div class="v ${r.cash<0?'neg':''}">${M(r.cash)}<small style="display:block;color:var(--mute);font-weight:400;font-size:10px">cash</small></div></div>`;}).join('')}</div></div>`;
 }
 function sparkline(){
@@ -1123,6 +1219,35 @@ function viewMoney(){
   <div class="panel"><h3>Your investors</h3>${invs.length?`<div class="list">${invs.map(([id,r])=>{const p=P(id);const yl=r.hist.length?r.hist.reduce((a,b)=>a+b,0)/r.hist.length*4/Math.max(1,r.paidIn)*100:0;const face=r.mood>65?'😀':r.mood>40?'🙂':r.mood>25?'😐':'😠';return`<div class="li"><span style="font-size:22px">${face}</span><div class="grow"><b>${esc(p.name)}</b><small>${p.shares.inv.toFixed(0)}% stake · paid in ${M(r.paidIn)} · yield ${yl.toFixed(1)}%/yr</small></div><button class="btn" style="width:auto" data-a="buyback" data-id="${id}"><span>Buy out</span><span class="c">${M(buybackPrice(p,p.shares.inv))}</span></button></div>`;}).join('')}</div>`:'<p class="hint" style="margin:0">None yet. Sell stakes in properties you control to outside investors to raise money without losing control. They expect a yield of about '+(prime(S.t)+3).toFixed(0)+'% a year and get angry when they don\'t see it.</p>'}</div>`;
 }
 
+
+// every property side by side: what it earns, from what, how it is trending, what it costs to buy into
+function compareRow(p){
+  const q=sumQ(rowsFor(p,'q')),y4=sumQ(rowsFor(p,'4q')),p4=sumQ(rowsFor(p,'p4q')),v=val(p),fc=forecastQ(p);
+  const op=p.status==='op'&&y4.n;
+  return{p,op,rooms:p.rooms,q:p.q,occ:p.last&&p.status==='op'?p.last.occ:null,rev4:op?y4.rev:null,net4:op?y4.net:null,margin:op&&y4.rev?y4.net/y4.rev:null,
+    yoy:op&&p4.n>=4?delta(y4.net,p4.net):null,fc:fc?fc.net:null,val:v,yld:op?y4.net/v:null,perRoom:op&&p.rooms?y4.rev/p.rooms*1000:null,price1:v/100,mix:y4,trend:(p.qh||[]).slice(-12).map(r=>r[13])};
+}
+const CMP_COLS=[['name','Property'],['net4','Net income, last 4q'],['rev4','Revenue, last 4q'],['mix','Revenue mix'],['margin','Margin'],['yoy','vs year before'],['trend','Net income, 12q'],['fc','Forecast, next 4q'],['occ','Occupancy'],['perRoom','Revenue per room'],['val','Value'],['yld','Net income ÷ value'],['price1','Price of 1%']];
+function compareTable(list){
+  const rows=list.map(compareRow);const k=dealSort.k,d=dealSort.d;
+  if(k!=='mix'&&k!=='trend')rows.sort((a,b)=>{const x=k==='name'?a.p.name:a[k],y=k==='name'?b.p.name:b[k];if(x==null)return 1;if(y==null)return -1;return(k==='name'?String(x).localeCompare(y):x-y)*d;});
+  const cell=(r,c)=>{const n=v=>v==null?'—':v;switch(c){
+    case 'name':return`<td><b>${esc(r.p.name)}</b><small><i class="sw" style="background:${ownerColor(ctrl(r.p))}"></i> ${esc(ownerName(ctrl(r.p)))} · ${r.p.status==='op'?`${r.p.rooms.toLocaleString()} rooms ${'★'.repeat(r.p.q)}`:statusLine(r.p)}</small></td>`;
+    case 'mix':return`<td style="min-width:90px">${r.op?mixBar(r.mix,8):'—'}</td>`;
+    case 'trend':return`<td>${r.op?trendLine(r.trend):'—'}</td>`;
+    case 'margin':return`<td>${r.margin==null?'—':Math.round(r.margin*100)+'%'}</td>`;
+    case 'yoy':return`<td class="${r.yoy==null?'':r.yoy<0?'neg':'pos'}">${r.yoy==null?'—':(r.yoy>0?'+':'')+r.yoy+'%'}</td>`;
+    case 'occ':return`<td>${r.occ==null?'—':Math.round(r.occ*100)+'%'}</td>`;
+    case 'perRoom':return`<td>${r.perRoom==null?'—':'$'+Math.round(r.perRoom)+'K'}</td>`;
+    case 'yld':return`<td>${r.yld==null?'—':(r.yld*100).toFixed(1)+'%'}</td>`;
+    case 'net4':case 'fc':return`<td class="${r[c]==null?'':r[c]<0?'neg':''}">${r[c]==null?'—':M(r[c])}</td>`;
+    default:return`<td>${r[c]==null?'—':M(r[c])}</td>`;}};
+  return`<div class="panel" style="padding:8px"><div class="tscroll"><table class="ctable cmp"><thead><tr>${CMP_COLS.map(([c,n])=>`<th ${c!=='mix'&&c!=='trend'?`data-a="dsort" data-k="${c}"`:''} class="${dealSort.k===c?'on':''}">${n}${dealSort.k===c?(dealSort.d<0?' ▾':' ▴'):''}</th>`).join('')}</tr></thead>
+  <tbody>${rows.map(r=>`<tr data-a="prop" data-id="${r.p.id}" class="${mine(r.p)?'mine':''}">${CMP_COLS.map(([c])=>cell(r,c)).join('')}</tr>`).join('')}</tbody></table></div>
+  <div class="legend" style="margin-top:6px">${REV_LINES.map(([,n,c])=>`<span><i class="sw" style="background:${c}"></i>${n}</span>`).join('')}</div>
+  <p class="hint">Tap a column to sort, and a row to open the property. Whole-property figures. Forecasts extend the trend of the last eight quarters and know nothing about what you or the rivals will do next.</p></div>`;
+}
+
 /* ---------- property sheet ---------- */
 function openSheet(html){$('#sheet').innerHTML=html;$('#ov').hidden=false;$('#sheet').scrollTop=0;}
 function closeSheet(){$('#ov').hidden=true;}
@@ -1137,10 +1262,22 @@ function openProp(id){
   <div class="kv" style="margin-top:10px"><div>Property value</div><div>${M(v)}</div><div>Land value</div><div>${M(landVal(p))}</div><div>Price of 1% (market)</div><div>${M(v/100)}</div>${you?`<div>Your stake</div><div style="color:var(--gold)">${M(v*you/100)}</div>`:''}</div></div>`;
   if(p.status==='op'&&p.last){
     const l=p.last;const rn=l.rn||1;
-    h+=`<div class="panel"><h3>Last quarter</h3>${l.noLic?'<p class="hint" style="color:var(--bad);margin-top:0">The casino is dark because you have no gaming license.</p>':''}${l.capHit?'<p class="hint" style="color:var(--gold);margin-top:0">The casino floor is at capacity. A bigger floor would earn more.</p>':''}
-    <div class="kv"><div>Occupancy</div><div>${Math.round(l.occ*100)}%</div><div>Rooms</div><div>${M(l.rev.rooms)}</div><div>Casino win</div><div>${M(l.rev.gaming)}</div><div>Food & drink</div><div>${M(l.rev.fb)}</div>${l.rev.other?`<div>Retail & events</div><div>${M(l.rev.other)}</div>`:''}<div class="tot">Revenue</div><div class="tot">${M(l.revenue)}</div>
-    <div>Hotel operations</div><div class="neg">${M(-l.cost.rooms)}</div><div>Casino operations</div><div class="neg">${M(-l.cost.casino)}</div><div>Gaming tax (6.75%)</div><div class="neg">${M(-l.cost.tax)}</div><div>Comps</div><div class="neg">${M(-l.cost.comps)}</div><div>Food & drink costs</div><div class="neg">${M(-l.cost.fb)}</div><div>Marketing</div><div class="neg">${M(-l.cost.marketing)}</div><div>Upkeep & property tax</div><div class="neg">${M(-l.cost.upkeep)}</div>${l.cost.mgmt?`<div>Manager's fee (2%)</div><div class="neg">${M(-l.cost.mgmt)}</div>`:''}
-    <div class="tot">EBITDA</div><div class="tot ${l.ebitda<0?'neg':'pos'}">${M(l.ebitda)}</div>${you?`<div>Your share of payout</div><div style="color:var(--gold)">${M(l.ebitda*.85*you/100)}</div>`:''}</div>
+    const cols=[['q','This quarter'],['y','This year'],['all','All time']].map(([k,n])=>[n,periodSum(p,k)]),fc=forecastQ(p),firstT=(p.qh||[])[0];
+    const line=(lab,idx,neg)=>`<tr><td>${lab}</td>${cols.map(([,x])=>`<td class="${neg?'neg':''}">${x&&x.n?M(neg?-x[idx]:x[idx]):'—'}</td>`).join('')}</tr>`;
+    const tline=(lab,f,cls)=>`<tr class="tot"><td>${lab}</td>${cols.map(([,x])=>{const v=x&&x.n?f(x):null;return`<td class="${v==null?'':cls?cls(v):''}">${v==null?'—':M(v)}</td>`;}).join('')}</tr>`;
+    h+=`<div class="panel"><h3>Results</h3>${l.noLic?'<p class="hint" style="color:var(--bad);margin-top:0">The casino is dark because you have no gaming license.</p>':''}${l.capHit?'<p class="hint" style="color:var(--gold);margin-top:0">The casino floor is at capacity. A bigger floor would earn more.</p>':''}
+    <div class="kv" style="margin-bottom:8px"><div>Occupancy last quarter</div><div>${Math.round(l.occ*100)}%</div></div>
+    <div class="tscroll"><table class="ctable pl"><thead><tr><th></th>${cols.map(([n])=>`<th>${n}</th>`).join('')}</tr></thead><tbody>
+    ${REV_LINES.map(([k,n])=>line(n,QI[k])).join('')}
+    ${tline('Revenue',x=>x.rev)}
+    ${COST_LINES.map(([k,n])=>line(n,QI[k],true)).join('')}
+    ${tline('Expenses',x=>-x.cost,()=>'neg')}
+    ${tline('Net income',x=>x.net,v=>v<0?'neg':'pos')}
+    ${you?tline('Paid to you',x=>x[QI.you],()=>'gold'):''}
+    </tbody></table></div>
+    <p class="hint">All time means since ${firstT?dateStr(firstT[0]):'it opened'}${firstT&&firstT[0]<0?', from the books the old owners kept':''}. Owners are paid 85% of net income each quarter, by stake.</p>
+    ${fc?`<div class="kv" style="margin-top:6px"><div>Next 4 quarters, if the trend holds</div><div></div><div>Revenue</div><div>${M(fc.rev)}</div><div>Net income</div><div class="${fc.net<0?'neg':'pos'}">${M(fc.net)}</div></div>`:''}
+    <h3 style="margin-top:12px">The last twelve quarters</h3>${resultsChart([p.qh||[]])}
     <h3 style="margin-top:12px">Guest mix</h3><div class="mix">${SEGS.map(k=>`<i style="width:${l.mix[k]/rn*100}%;background:${SEG[k].c}"></i>`).join('')}</div><div class="legend">${SEGS.map(k=>`<span><i class="sw" style="background:${SEG[k].c}"></i>${SEG[k].n} ${Math.round(l.mix[k]/rn*100)}%</span>`).join('')}</div>
     <div class="legend" style="margin-top:8px">${p.am.map(a=>`<span class="chip">${AMEN[a].i} ${AMEN[a].n}</span>`).join('')}${p.games.map(g=>`<span class="chip">${GAMES[g].i} ${GAMES[g].n}</span>`).join('')}${p.chef?'<span class="chip">👨‍🍳 Celebrity chef</span>':''}${p.boost?'<span class="chip gold">🎤 Headliner</span>':''}</div></div>`;
   }
@@ -1285,8 +1422,8 @@ function showMenu(){
   <div class="panel"><h3>How it works</h3><div class="hint" style="font-size:13px;line-height:1.55">
   <p><b>Each turn is a quarter.</b> Hotels fill up with five types of guests. Each type likes different themes, star ratings, prices, amenities and casino games. Lit windows on the skyline show occupancy.</p>
   <p><b>Control</b> means you and your investors together hold more than 50%. Only the controlling owner runs and develops a property. Your investors fund their share of every project and expect a return. Unhappy investors may walk, and their shares can end up with a rival.</p>
-  <p><b>Payouts:</b> owners receive 85% of each property's EBITDA every quarter. Losses become capital calls.</p>
-  <p><b>Value</b> is about ${valMult(S.t).toFixed(1)} times annual EBITDA, never less than the land underneath. Land and condo prices follow real Las Vegas booms and busts.</p>
+  <p><b>Payouts:</b> owners receive 85% of each property's net income every quarter (revenue minus running costs, before anyone's loan interest). Losses become capital calls.</p>
+  <p><b>Value</b> is about ${valMult(S.t).toFixed(1)} times a year's net income, never less than the land underneath. Land and condo prices follow real Las Vegas booms and busts.</p>
   <p><b>Win</b> by controlling every property, or by surviving sixty years. Lose by missing two reviews in a row, running out of backer confidence, or getting margin-called with nothing left to sell.</p></div></div>
   <button class="btn" data-a="quit">Abandon this career</button>
   <p class="ver">House Edge · version ${APP_VERSION}</p>`);
@@ -1300,6 +1437,9 @@ document.addEventListener('click',e=>{
   switch(a){
     case 'tab':tab=k;render();$('#view').scrollTop=0;break;
     case 'filter':dealFilter=k;render();break;
+    case 'dview':dealView=k;render();break;
+    case 'dsort':dealSort=dealSort.k===k?{k,d:-dealSort.d}:{k,d:k==='name'?1:-1};render();break;
+    case 'lper':ledgerPer=k;render();break;
     case 'prop':flyTo(id);openProp(id);break;
     case 'cam':camAction(k);break;
     case 'close':closeSheet();break;
