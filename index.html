@@ -178,6 +178,7 @@ input[type=text]{width:100%;background:var(--panel);border:1px solid var(--line)
 @media (max-width:520px){.ctable{font-size:11.5px}.ctable th{font-size:9.5px;letter-spacing:.3px;padding:6px 5px}.ctable td{padding:6px 5px}.ctable.cmp td:first-child{min-width:112px;max-width:132px}.ctable.cmp td:first-child b{font-size:12px}.ctable.pl td:first-child{min-width:84px;max-width:110px}}
 .updbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom));z-index:200;background:var(--gold);color:#1a1033;border:0;border-radius:999px;padding:12px 20px;font:inherit;font-size:14px;box-shadow:0 6px 24px #0008;white-space:nowrap}
 @media(max-width:600px){.byp thead{display:none}.byp tr{display:grid;grid-template-columns:repeat(5,1fr);gap:2px;padding:8px 0;border-bottom:1px solid var(--line)}.byp td{border:0!important;padding:2px!important;text-align:right;font-size:12px}.byp td:first-child{grid-column:1/-1;text-align:left;font-size:14px}.byp td[data-l]::before{content:attr(data-l);display:block;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}.byp tr.tot td:first-child{font-weight:700}}
+.seg button small.fx{display:block;font-size:9.5px;font-weight:600;opacity:.95;margin-top:1px;color:var(--mute)}.seg button small.fx.pos{color:var(--good)}.seg button small.fx.neg{color:var(--bad)}.seg button.on small.fx{color:inherit}.btn small.est{display:block;color:var(--cyan);margin-top:3px}
 </style>
 </head>
 <body>
@@ -259,7 +260,7 @@ const MAXT=239;
    ========================================================= */
 const $=s=>document.querySelector(s);
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const rnd=Math.random;
+let rndFix=false;const rnd=()=>rndFix?.5:Math.random();
 const pick=a=>a[Math.floor(rnd()*a.length)];
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function M(v){const a=Math.abs(v),s=v<0?'−':'';if(a<.0005)return'$0';if(a>=1000)return s+'$'+(a/1000).toFixed(a>=10000?1:2)+'B';if(a>=100)return s+'$'+a.toFixed(0)+'M';if(a>=1)return s+'$'+a.toFixed(1)+'M';return s+'$'+Math.round(a*1000)+'K';}
@@ -313,7 +314,8 @@ function newGame(name){
   simulateMarket(true);seedHistory();S.stk={};for(const p of props)reprice(p,true);
   S.hist.push({t:0,nw:netWorth(),cash:S.cash,loan:S.loan});S.nwPrev=netWorth();
 }
-function save(){try{localStorage.setItem('houseedge-v1',JSON.stringify(S));}catch(e){}}
+let simGen=0;
+function save(){simGen++;try{localStorage.setItem('houseedge-v1',JSON.stringify(S));}catch(e){}}
 function loadSave(){try{const s=localStorage.getItem('houseedge-v1');const o=s?JSON.parse(s):null;
   // games saved before the license came with you: an investor who never lost it holds it now
   if(o&&o.license==='none'&&!o.licWait)o.license='licensed';
@@ -643,6 +645,61 @@ function booksKV(p,offer){const b=S.basis&&S.basis[p.id];const you=p.shares.you|
 
 function offerHtml(p,offer,pctStake){if(!pctStake)return'';
   return`<div class="panel"><h3>Your books on ${esc(p.name)}</h3>${booksKV(p,offer)}</div>${analystBox(analystOffer(p,offer,pctStake),'Analyst’s view on the offer')}`;}
+
+/* =========================================================
+   WHAT-IF: rerun this quarter's market with one thing changed
+   ========================================================= */
+function simKeep(){return S.props.map(o=>{const c={};for(const k in o){if(k==='qh')continue;const v=o[k];c[k]=v&&typeof v==='object'?JSON.parse(JSON.stringify(v)):v;}return[o,c];});}
+function simRestore(sv){for(const [o,c] of sv){for(const k of Object.keys(o))if(k!=='qh')delete o[k];Object.assign(o,c);}}
+function simRun(p,mut){const sv=simKeep();rndFix=true;
+  try{for(const o of S.props){o.disrupt=1;o.bonusRev=0;}if(p){if(p.project&&p.project.kind!=='build')p.project=null;if(mut)mut(p);}
+    simulateMarket(true);const r={net:{},you:0};
+    for(const o of S.props)if(o.status==='op'&&o.last){r.net[o.id]=o.last.ebitda;r.you+=(o.shares.you||0)/100*o.last.ebitda*PAYOUT;}
+    return r;}finally{rndFix=false;simRestore(sv);}}
+function fxOf(p,base,mut){const r=simRun(p,mut);return{dNet:(r.net[p.id]||0)-(base.net[p.id]||0),dYou:r.you-base.you};}
+const valOf=annual=>annual*valMult(S.t)*rateMult();
+const fxs=v=>Math.abs(v)<.005?'±0':(v>0?'+':'−')+M(Math.abs(v)).replace('$','');
+const fxq=v=>Math.abs(v)<.005?'±0':(v>0?'+':'−')+M(Math.abs(v)).replace(/^[−-]/,'');
+// settings: what each option does to this hotel's quarterly net income
+function settingsFx(p,base){const out={};for(const [k,o] of Object.entries(OPT)){out[k]={};for(const v of Object.keys(o.o)){out[k][v]=v===p.set[k]&&!p.auto?0:fxOf(p,base,x=>{x.auto=false;x.set={...x.set,[k]:v};}).dNet;}}return out;}
+function bestSettings(p,base){let set={...p.set},cur=fxOf(p,base,x=>{x.auto=false;x.set={...set};}).dNet;
+  for(let pass=0;pass<2;pass++)for(const [k,o] of Object.entries(OPT)){for(const v of Object.keys(o.o)){if(v===set[k])continue;const t={...set,[k]:v};const g=fxOf(p,base,x=>{x.auto=false;x.set=t;}).dNet;if(g>cur+.002){cur=g;set=t;}}}
+  return{set,gain:cur};}
+const PROJ_MUT={renovate:(x,o)=>{x.cond=95;},upgrade:(x,o)=>{x.q++;x.cond=Math.max(x.cond,90);if(x.auto)x.set=autoSet(x);},expand:(x,o)=>{x.rooms+=o.add;},amenity:(x,o)=>{x.am=[...x.am,o.am];},implode:(x,o)=>{Object.assign(x,{status:'lot',rooms:0,last:null});}};
+const LOST={renovate:.4,upgrade:.4,retheme:.3};
+// a project: cost, effect on income, your share, payback and value created
+function projFx(p,o,base){const sh=(p.shares.you||0)/100,cost=o.cost,yc=cost*sh,r={kind:o.kind,cost,yc};
+  if(o.kind==='condo'){const pr=300*.28*houseIdx(S.t)*infl(0)*(p.q/3)*macro(S.t);r.oneOff=pr;r.gain=(pr-cost)*sh;r.roc=yc>0?r.gain/yc:null;return r;}
+  if(!PROJ_MUT[o.kind])return null;
+  const e=fxOf(p,base,x=>PROJ_MUT[o.kind](x,o));r.dNet=e.dNet*4;r.dYou=e.dYou*4;
+  r.lost=(base.net[p.id]||0)*(LOST[o.kind]||0)*o.q*sh*PAYOUT;
+  r.val=valOf(e.dNet*4)*(p.vm||1)*sh;r.gain=r.val-yc-r.lost;
+  r.roc=yc>.01?r.dYou/yc:null;r.pay=r.dYou>.01?(yc+r.lost)/r.dYou:null;return r;}
+function projLine(r){if(!r)return'';const lr=loanRate()/100;
+  if(r.oneOff!=null)return`Sells for about ${M(r.oneOff)}. Your profit about ${M(r.gain)}${r.roc!=null?`, ${P1(r.roc)} on your cost`:''}.`;
+  if(r.kind==='implode')return`Gives up about ${M(-r.dYou)} a year of your payouts. Leaves land worth ${M(0)}.`.replace(` Leaves land worth ${M(0)}.`,'');
+  const parts=[`Net income ${fxq(r.dNet)} a year`];
+  if(r.yc>.01)parts.push(r.roc!=null&&r.roc>0?`pays you ${P1(r.roc)} a year on your cost vs your ${P1(lr)} loan`:'no payback at today\'s demand');
+  if(r.pay!=null&&r.pay<40)parts.push(`pays back in ${r.pay.toFixed(1)} yrs`);
+  parts.push(`adds about ${M(r.val)} of value to your stake`);
+  return parts.join(' · ')+'.';}
+// the moves that would add most to your net worth, across everything you run
+let movesCache=null;
+function bestMoves(){const key=S.t+'|'+simGen;if(movesCache&&movesCache.key===key)return movesCache.list;
+  const out=[];const lr=loanRate()/100;
+  for(const p of S.props){if(!mine(p)||p.status!=='op'||p.project)continue;const sh=(p.shares.you||0)/100,base=simRun(p);
+    const b=bestSettings(p,base);if(b.gain>.02)out.push({p,kind:'set',title:p.auto?`Take over running ${p.name} from the manager`:`Change how ${p.name} is run`,d:`${p.auto?'Saves the 2% fee. ':''}${Object.entries(b.set).filter(([k,v])=>v!==p.set[k]).map(([k,v])=>`${OPT[k].l.toLowerCase()} ${OPT[k].o[v].toLowerCase()}`).join(', ')}. Net income ${fxq(b.gain*4)} a year.`,cost:0,gain:valOf(b.gain*4)*(p.vm||1)*sh,set:b.set});
+    for(const o of projOptions(p)){if(!PROJ_MUT[o.kind]&&o.kind!=='condo')continue;if(o.kind==='implode'||o.kind==='renovate'&&p.cond>70)continue;const r=projFx(p,o,base);if(!r||r.gain<=.05)continue;
+      out.push({p,kind:'proj',title:`${o.n} at ${p.name}`,d:projLine(r),cost:r.yc,gain:r.gain});}
+    for(const fl of FLOORS.filter(x=>x>p.floor)){const cost=(fl-p.floor)*.4*infl(S.t);const e=fxOf(p,base,x=>{x.floor=fl;});const v=valOf(e.dNet*4)*(p.vm||1)*sh-cost*sh;if(v>.05)out.push({p,kind:'floor',title:`Grow the casino at ${p.name} to ${fl}k sq ft`,d:`Net income ${fxq(e.dNet*4)} a year · pays you ${P1(e.dYou*4/Math.max(.01,cost*sh))} a year on your cost vs your ${P1(lr)} loan.`,cost:cost*sh,gain:v});}
+    for(const g of Object.keys(GAMES).filter(g=>!p.games.includes(g))){if(!p.floor)break;const cost=GAMES[g].cost*infl(S.t);const e=fxOf(p,base,x=>{x.games=[...x.games,g];});const v=valOf(e.dNet*4)*(p.vm||1)*sh-cost*sh;if(v>.05)out.push({p,kind:'game',title:`Open a ${GAMES[g].n.toLowerCase()} at ${p.name}`,d:`Net income ${fxq(e.dNet*4)} a year.`,cost:cost*sh,gain:v});}
+  }
+  out.sort((a,b)=>b.gain-a.gain);const list=out.slice(0,6);movesCache={key,list};return list;}
+function movesPanel(){const L=bestMoves();const any=S.props.some(p=>mine(p)&&p.status==='op');
+  if(!any)return`<div class="panel"><h3>Best moves</h3><p class="hint" style="margin:0">Once you control a hotel, this lists the changes most likely to add to your net worth. Buy over 50% of one (with your investors) to take control.</p></div>`;
+  return`<div class="panel"><h3>Best moves</h3>${L.length?`<div class="list">${L.map(m=>`<div class="li" data-a="prop" data-id="${m.p.id}"><div class="grow"><b>${esc(m.title)}</b><small>${m.d}</small></div><div class="v pos">+${M(m.gain)}<small style="display:block;color:var(--mute);font-weight:400;font-size:10px">${m.cost>.005?`for ${M(m.cost)}`:'free'}</small></div></div>`).join('')}</div>`:'<p class="hint" style="margin:0">Nothing obvious right now. Your hotels are set up about as well as today\'s demand allows.</p>'}
+  <p class="hint" style="margin:8px 0 0">Estimates rerun this quarter's market with each change made, so they include guests pulled from your other hotels. The green figure is what it should add to your net worth after its cost and any income lost while work is under way. Rivals react and the economy moves, so treat these as a guide.</p></div>`;}
+
 /* pricing */
 function buyPrice(p,from,pct){
   const v=val(p)/100*pct;let m;
@@ -1308,6 +1365,7 @@ function viewStrip(){
   <div class="cards">${[...S.props].sort((a,b)=>a.ord-b.ord).map(pcard).join('')}</div>`;
 }
 function viewHold(){
+  const mv=movesPanel();
   const h=S.props.filter(p=>(p.shares.you||0)>0||(p.shares.inv||0)>0);
   const per=ledgerPer,sums=h.map(p=>periodSum(p,per)),tot=addSums(sums),fc=per==='fc';
   const youOf=(p,x)=>!x?0:fc?x[QI.you]:x[QI.you];
@@ -1315,7 +1373,7 @@ function viewHold(){
   const rows=h.map((p,i)=>{const x=sums[i];if(!x||(!x.n&&!x.fc))return`<tr><td>${esc(p.name)}<small>${p.status==='op'?'no results yet':statusLine(p)}</small></td><td>—</td><td>—</td><td>—</td><td>—</td><td>${(p.shares.you||0).toFixed(0)}%</td><td>—</td></tr>`;
     return`<tr data-a="prop" data-id="${p.id}"><td>${esc(p.name)}<small>${mixBar(x,5)}</small></td><td>${M(x.rev)}</td><td class="neg">${M(-x.cost)}</td><td class="${x.net<0?'neg':'pos'}">${M(x.net)}</td><td>${pct(x.net,x.rev)}%</td><td>${(p.shares.you||0).toFixed(0)}%</td><td style="color:var(--gold)">${M(youOf(p,x))}</td></tr>`;}).join('');
   const L=ledgerSum(per);
-  return`<h2 class="sec">Income statement</h2>
+  return`<h2 class="sec">Income statement</h2>${mv}
   <div class="panel"><div class="kv"><div>Stakes at market value</div><div>${M(stakesVal())}</div><div>Cash</div><div>${M(S.cash)}</div><div>Bank loan</div><div class="neg">${M(-S.loan)}</div><div class="tot">Net worth</div><div class="tot">${M(netWorth())}</div></div></div>
   ${perSeg(per,'lper')}
   ${h.length?`<div class="panel"><h3>Your properties · ${PERIODS[per].toLowerCase()}${fc?' (if the trend of the last two years holds)':''}</h3>
@@ -1496,16 +1554,20 @@ function openProp(id){
   h+=`<div class="panel"><h3>Deals</h3><p class="hint" style="margin-top:0">You have ${M(available())} in cash and credit.${!mineP?` Control takes more than 50% between you and your investors.`:''}</p><div class="btns">${d.join('')||'<p class="hint">No shares available.</p>'}</div></div>`;
   if(mineP&&p.status==='op'){
     const dis=p.auto;
+    const base=simRun(p),sfx=settingsFx(p,base),best=bestSettings(p,base);
+    const fxBtns=(k,o)=>`<div class="seg ${dis?'dis':''}">${Object.entries(o.o).map(([v,l])=>{const d=sfx[k][v];return`<button class="${p.set[k]===v?'on':''}" data-a="set" data-id="${p.id}" data-s="${k}" data-k="${v}">${l}<small class="fx ${d>.005?'pos':d<-.005?'neg':''}">${p.set[k]===v&&!p.auto?'now':fxs(d)}</small></button>`;}).join('')}</div>`;
     h+=`<div class="panel"><h3>Management</h3><div class="toggle"><span>Let a property manager run it<small class="hint" style="display:block">They pick sensible settings for a ${p.q}-star hotel and take 2% of revenue.</small></span><button class="sw-btn ${p.auto?'on':''}" data-a="auto" data-id="${p.id}" aria-label="Toggle manager"></button></div>
-    <div style="margin-top:10px">${Object.entries(OPT).map(([k,o])=>`<div class="setrow"><span>${o.l}</span>${segBtns(o.o,p.set[k],'set',dis,`data-id="${p.id}" data-s="${k}"`)}</div>`).join('')}</div></div>
-    <div class="panel"><h3>Casino floor</h3><div class="setrow"><span>Size (k sq ft)</span><div class="seg">${FLOORS.map(fl=>`<button class="${p.floor===fl?'on':''}" data-a="floor" data-id="${p.id}" data-k="${fl}">${fl||'None'}</button>`).join('')}</div></div>
+    ${best.gain>.01?`<button class="btn" style="margin-top:10px" data-a="bestset" data-id="${p.id}"><span>Use the best combination found<small>${Object.entries(best.set).filter(([k,v])=>v!==p.set[k]).map(([k,v])=>`${OPT[k].l}: ${OPT[k].o[v]}`).join(' · ')}${p.auto?' · runs it yourself, saving the 2% fee':''}</small></span><span class="c pos">${fxq(best.gain)}/q</span></button>`:`<p class="hint">${p.auto?'The manager\'s settings are about the best available.':'These settings are about the best available right now.'}</p>`}
+    <div style="margin-top:10px">${Object.entries(OPT).map(([k,o])=>`<div class="setrow"><span>${o.l}</span>${fxBtns(k,o)}</div>`).join('')}</div>
+    <p class="hint">Under each option: the change in this hotel's net income per quarter if you switch to it alone, at today's demand. Settings work together, so some changes only pay off in combination: the best-settings button tests them together${p.auto?', compared with the manager\'s choices. Tapping one takes over from the manager':''}.</p></div>
+    <div class="panel"><h3>Casino floor</h3><div class="setrow"><span>Size (k sq ft)</span><div class="seg">${FLOORS.map(fl=>{const d=fl===p.floor?0:fxOf(p,base,x=>{x.floor=fl;}).dNet;return`<button class="${p.floor===fl?'on':''}" data-a="floor" data-id="${p.id}" data-k="${fl}">${fl||'None'}<small class="fx ${d>.005?'pos':d<-.005?'neg':''}">${fl===p.floor?'now':fxs(d)}</small></button>`;}).join('')}</div></div>
     <p class="hint" style="margin-top:0">Expanding costs ${M(.4*f)} per thousand sq ft. Shrinking is free.</p>
-    <div class="setrow"><span>Game mix</span>${segBtns(Object.fromEntries(Object.entries(MIXES).map(([k,m])=>[k,m.n])),p.mix,'mix',false,`data-id="${p.id}"`)}</div>
-    ${Object.entries(GAMES).map(([k,g])=>`<div class="toggle"><span>${g.i} ${g.n}${p.games.includes(k)?'':` <span class="hint">· ${M(g.cost*f)} to open</span>`}</span><button class="sw-btn ${p.games.includes(k)?'on':''}" data-a="game" data-id="${p.id}" data-k="${k}"></button></div>`).join('')}</div>`;
+    <div class="setrow"><span>Game mix</span><div class="seg">${Object.entries(MIXES).map(([k,m])=>{const d=k===p.mix?0:fxOf(p,base,x=>{x.mix=k;}).dNet;return`<button class="${p.mix===k?'on':''}" data-a="mix" data-id="${p.id}" data-k="${k}">${m.n}<small class="fx ${d>.005?'pos':d<-.005?'neg':''}">${k===p.mix?'now':fxs(d)}</small></button>`;}).join('')}</div></div>
+    ${Object.entries(GAMES).map(([k,g])=>{const d=fxOf(p,base,x=>{x.games=p.games.includes(k)?x.games.filter(z=>z!==k):[...x.games,k];}).dNet;return`<div class="toggle"><span>${g.i} ${g.n}${p.games.includes(k)?'':` <span class="hint">· ${M(g.cost*f)} to open</span>`}<small class="hint" style="display:block">${p.games.includes(k)?'Closing it':'Opening it'}: net income <span class="${d>.005?'pos':d<-.005?'neg':''}">${fxq(d)}</span> a quarter</small></span><button class="sw-btn ${p.games.includes(k)?'on':''}" data-a="game" data-id="${p.id}" data-k="${k}"></button></div>`;}).join('')}<p class="hint">Figures are this hotel's net income per quarter if you make that one change, at today's demand.</p></div>`;
   }
   if(mineP&&!p.project&&(p.status==='op'||p.status==='lot')){
-    const os=projOptions(p);
-    h+=`<div class="panel"><h3>Develop</h3><p class="hint" style="margin-top:0">Costs are split by ownership and paid as work progresses. Your share is ${you.toFixed(0)}%.</p><div class="btns">${os.map((o,i)=>o.kind==='design'?`<button class="btn primary" data-a="design" data-id="${p.id}">🏗️ Design a new resort here</button>`:o.kind==='retheme'?`<button class="btn" data-a="retheme" data-id="${p.id}"><span>${o.n}<small>${o.d}</small></span><span class="c">${M(o.cost)}</span></button>`:`<button class="btn" data-a="proj" data-id="${p.id}" data-k="${i}"><span>${o.n}<small>${o.d}</small></span><span class="c">${M(o.cost)}</span></button>`).join('')}</div></div>`;
+    const os=projOptions(p),pbase=p.status==='op'?simRun(p):null;
+    h+=`<div class="panel"><h3>Develop</h3><p class="hint" style="margin-top:0">Costs are split by ownership and paid as work progresses. Your share is ${you.toFixed(0)}%.</p><div class="btns">${os.map((o,i)=>o.kind==='design'?`<button class="btn primary" data-a="design" data-id="${p.id}">🏗️ Design a new resort here</button>`:o.kind==='retheme'?`<button class="btn" data-a="retheme" data-id="${p.id}"><span>${o.n}<small>${o.d}</small></span><span class="c">${M(o.cost)}</span></button>`:`<button class="btn" data-a="proj" data-id="${p.id}" data-k="${i}"><span>${o.n}<small>${o.d}</small>${pbase?`<small class="est">${projLine(projFx(p,o,pbase))}</small>`:''}</span><span class="c">${M(o.cost)}</span></button>`).join('')}</div></div>`;
   } else if(!mineP){h+=`<p class="hint">Only the controlling owner decides how this property is run and developed.</p>`;}
   const sc=$('#sheet')&&!$('#ov').hidden&&$('.sheet-head h2')&&$('.sheet-head h2').textContent===p.name?$('#sheet').scrollTop:0;
   openSheet(h);if(sc)$('#sheet').scrollTop=sc;initHero(p);
@@ -1533,6 +1595,10 @@ function openDesigner(id,retheme){
   const spec={...d};const cost=specCost(spec),qn=buildQ(spec);
   const prev={...p,status:'op',theme:d.theme,q:d.q,rooms:d.rooms,am:d.am,floor:d.floor,mix:d.mix,games:d.games,cond:100,opened:yf(S.t),set:autoSet({q:d.q}),boost:null,chef:false,last:null};
   const at=SEGS.map(s=>attraction(prev,s));const mx=Math.max(...at);
+  const dbase=simRun(p),dsim=simRun(p,x=>{Object.assign(x,{status:'op',theme:d.theme,q:d.q,rooms:d.rooms,am:[...d.am],floor:d.floor,mix:d.mix,games:[...d.games],cond:100,opened:yf(S.t),auto:true,set:autoSet({q:d.q}),boost:null,chef:false,last:null,ttm:[],project:null});});
+  const dset=simRun(p,x=>{Object.assign(x,{status:'op',theme:d.theme,q:d.q,rooms:d.rooms,am:[...d.am],floor:d.floor,mix:d.mix,games:[...d.games],cond:85,opened:yf(S.t)-5,auto:true,set:autoSet({q:d.q}),boost:null,chef:false,last:null,ttm:[],project:null});});
+  const dAnn=(dsim.net[p.id]||0)*4,dWorth=valOf((dset.net[p.id]||0)*4),sh=(p.shares.you||0)/100,dYou=(dsim.you-dbase.you)*4;
+  const estHtml=`<div class="panel"><h3>If it opened today</h3><div class="kv"><div>Net income, first year</div><div class="${dAnn<0?'neg':'pos'}">${M(dAnn)}</div><div>Your payouts change</div><div class="${dYou<0?'neg':'pos'}">${fxq(dYou)} a year</div><div>Worth once the buzz settles, about</div><div>${M(dWorth)}</div><div>Cost plus land today</div><div>${M(cost+landVal(p))}</div><div class="tot">Value created for you</div><div class="tot ${dWorth-cost-landVal(p)<0?'neg':'pos'}">${M((dWorth-cost-landVal(p))*sh)}</div><div>Pays you a year on your cost</div><div>${cost*sh>.01?P1(dYou/(cost*sh)):'—'} <small class="hint">vs ${P1(loanRate()/100)} loan</small></div></div><p class="hint" style="margin:8px 0 0">Run against today's visitors and rivals, with new-resort buzz. It takes ${qn} quarters to build, plus permits, and the market will have moved by then. Change the design and the estimate updates.</p></div>`;
   openSheet(`<div class="sheet-head"><button class="iconbtn" data-a="prop" data-id="${id}">‹</button><h2>Design a resort</h2><button class="iconbtn" data-a="close">✕</button></div>
   <div class="hero"><canvas class="hero3d" id="heroCv"></canvas><div class="info"><div class="kv"><div>Total cost</div><div>${M(cost)}</div><div>Your share (${(p.shares.you||0).toFixed(0)}%)</div><div style="color:var(--gold)">${M(cost*(p.shares.you||0)/100)}</div><div>Build time</div><div>${qn} quarters + permits</div><div>Per quarter, your share</div><div>${M(cost*(p.shares.you||0)/100/qn)}</div></div></div></div>
   <div class="panel"><h3>Name</h3><input type="text" id="dname" maxlength="22" placeholder="Name your resort" value="${esc(d.name)}"></div>
@@ -1544,7 +1610,7 @@ function openDesigner(id,retheme){
   <div class="setrow"><span>Game mix</span>${segBtns(Object.fromEntries(Object.entries(MIXES).map(([k,m])=>[k,m.n])),d.mix,'dset',false,'data-s="mix"')}</div>
   ${Object.entries(GAMES).map(([k,g])=>`<div class="toggle"><span>${g.i} ${g.n} <span class="hint">· ${M(g.cost*f)}</span></span><button class="sw-btn ${d.games.includes(k)?'on':''}" data-a="dset" data-s="games" data-k="${k}"></button></div>`).join('')}</div>
   <div class="panel"><h3>Who this resort will draw</h3>${SEGS.map(s=>`<div class="setrow" style="margin-bottom:5px"><span>${SEG[s].i} ${SEG[s].n}</span><div class="bar" style="height:8px"><i style="width:${at[SEGS.indexOf(s)]/mx*100}%;background:${SEG[s].c}"></i></div></div>`).join('')}<p class="hint">Relative appeal by guest type. Today's visitor mix: ${SEGS.map(s=>`${SEG[s].n.toLowerCase()} ${Math.round(segShares(yf(S.t))[s]*100)}%`).join(', ')}.</p></div>
-  <button class="btn primary" data-a="dstart" data-id="${id}">Break ground</button>`);
+  ${estHtml}<button class="btn primary" data-a="dstart" data-id="${id}">Break ground</button>`);
   initHero({...prev,name:d.name||THEMES[d.theme].n,last:{occ:.85},project:null});
   const r=$('#drooms');if(r)r.addEventListener('input',e=>{design.rooms=+e.target.value;});r&&r.addEventListener('change',()=>openDesigner(id));
   const n=$('#dname');if(n)n.addEventListener('input',e=>{design.name=e.target.value;});
@@ -1666,7 +1732,7 @@ function showOver(){
 
 /* ---------- intro & menu ---------- */
 // bump with every release, so a player can say which build they are on
-const APP_VERSION='0.7';
+const APP_VERSION='0.8';
 function showIntro(){
   const saved=loadSave();
   openSheet(`<div class="logo-big">HOUSE EDGE</div><p class="ver">Version ${APP_VERSION}</p><p class="lede">Las Vegas, 1988.</p>
@@ -1711,7 +1777,8 @@ document.addEventListener('click',e=>{
     case 'sellmkt':sellMkt(p,+k);break;
     case 'buyback':buyback(p);if(!$('#ov').hidden&&$('.sheet-head'))openProp(id);break;
     case 'auto':p.auto=!p.auto;if(p.auto)p.set=autoSet(p);save();openProp(id);break;
-    case 'set':p.set[el.dataset.s]=k;save();openProp(id);break;
+    case 'set':if(p.auto){p.auto=false;}p.set[el.dataset.s]=k;save();openProp(id);break;
+    case 'bestset':{const b=bestSettings(p,simRun(p));p.auto=false;p.set={...b.set};save();toast('New settings in place.');openProp(id);break;}
     case 'floor':{const nf=+k;const cost=Math.max(0,nf-p.floor)*.4*infl(S.t);const share=cost*(p.shares.you||0)/100;if(share>available()){toast('Not enough cash and credit.');break;}payOwners(p,cost);p.floor=nf;save();render();openProp(id);if(cost)toast(`Casino floor resized. Your share: ${M(share)}.`);break;}
     case 'mix':p.mix=k;save();openProp(id);break;
     case 'game':{if(p.games.includes(k)){p.games=p.games.filter(g=>g!==k);}else{const cost=GAMES[k].cost*infl(S.t);if(cost*(p.shares.you||0)/100>available()){toast('Not enough cash and credit.');break;}payOwners(p,cost);p.games.push(k);}save();render();openProp(id);break;}
