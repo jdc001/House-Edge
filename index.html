@@ -177,6 +177,7 @@ input[type=text]{width:100%;background:var(--panel);border:1px solid var(--line)
 .ctable.pl td:first-child{white-space:normal;min-width:96px}
 @media (max-width:520px){.ctable{font-size:11.5px}.ctable th{font-size:9.5px;letter-spacing:.3px;padding:6px 5px}.ctable td{padding:6px 5px}.ctable.cmp td:first-child{min-width:112px;max-width:132px}.ctable.cmp td:first-child b{font-size:12px}.ctable.pl td:first-child{min-width:84px;max-width:110px}}
 .updbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom));z-index:200;background:var(--gold);color:#1a1033;border:0;border-radius:999px;padding:12px 20px;font:inherit;font-size:14px;box-shadow:0 6px 24px #0008;white-space:nowrap}
+@media(max-width:600px){.byp thead{display:none}.byp tr{display:grid;grid-template-columns:repeat(5,1fr);gap:2px;padding:8px 0;border-bottom:1px solid var(--line)}.byp td{border:0!important;padding:2px!important;text-align:right;font-size:12px}.byp td:first-child{grid-column:1/-1;text-align:left;font-size:14px}.byp td[data-l]::before{content:attr(data-l);display:block;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}.byp tr.tot td:first-child{font-weight:700}}
 </style>
 </head>
 <body>
@@ -309,7 +310,7 @@ function newGame(name){
     props,rivals:RIVALS.map(r=>({...r})),inv:{},hist:[],log:[],pending:[],shocks,
     qInc:null,report:null,over:null,donQ:-1,mobQ:-1,lastEvt:{},nwPrev:5,fireRisk:{},ledger:[],flow:{capex:0,buy:0,sell:0},basis:{}};
   S.D0=props.filter(p=>p.status==='op').reduce((s,p)=>s+p.rooms,0)*91*.86;
-  simulateMarket(true);seedHistory();for(const p of props)reprice(p,true);
+  simulateMarket(true);seedHistory();S.stk={};for(const p of props)reprice(p,true);
   S.hist.push({t:0,nw:netWorth(),cash:S.cash,loan:S.loan});S.nwPrev=netWorth();
 }
 function save(){try{localStorage.setItem('houseedge-v1',JSON.stringify(S));}catch(e){}}
@@ -363,6 +364,7 @@ function devGain(p){const pr=p.project;if(!pr||pr.kind!=='build'||!pr.spec)retur
   const done=(pr.q-pr.qLeft)/pr.q;if(done<=0)return 0;
   const fin=pr.spec.rooms*netPerRoom(pr.spec.q)*valMult(S.t)*rateMult();
   return Math.max(0,fin-landVal(p)-pr.cost)*done*.6;}
+const stakeMap=()=>{const o={};for(const p of S.props)if((p.shares.you||0)>0)o[p.id]=val(p)*p.shares.you/100;return o;};
 const stakesVal=()=>S.props.reduce((s,p)=>s+(p.shares.you||0)/100*val(p),0);
 const netWorth=()=>S.cash-S.loan+stakesVal();
 const creditLimit=()=>(TITLE_CREDIT[S.title]*infl(S.t)+advRate()*stakesVal())*S.creditBonus;
@@ -517,7 +519,7 @@ function seedHistory(){
     for(let k=8;k>=1;k--){const f=Math.pow(1.03,-k/4)*Math.pow(1.05,-k/4)*(.9+rnd2()*.14),cf=Math.pow(1.03,-k/4)*(.97+rnd2()*.06);const row=qRow(p.last,-k,0);
       for(let i=1;i<=4;i++)row[i]=r2(row[i]*f);for(let i=5;i<=12;i++)row[i]=r2(row[i]*cf);row[13]=r2(row.slice(1,5).reduce((a,b)=>a+b,0)-row.slice(5,13).reduce((a,b)=>a+b,0));p.qh.push(row);}}
 }
-function addFlow(k,amt){const o=busy&&S.qInc?S.qInc:S.flow;o[k]=(o[k]||0)+amt;}
+function addFlow(k,amt,p){const o=busy&&S.qInc?S.qInc:S.flow;o[k]=(o[k]||0)+amt;if(p){o.byP=o.byP||{};const b=o.byP[p.id]||(o.byP[p.id]={});b[k]=(b[k]||0)+amt;}}
 // sum a run of quarters; rev, cost and net come out as totals
 function sumQ(rows){const s=Array(15).fill(0);for(const r of rows)for(let i=1;i<15;i++)s[i]+=r[i];s.rev=s[1]+s[2]+s[3]+s[4];s.cost=s.slice(5,13).reduce((a,b)=>a+b,0);s.net=s[13];s.n=rows.length;return s;}
 const PERIODS={q:'This quarter',y:'This year',y5:'Last 5 years',all:'All time',fc:'Next 4 quarters'};
@@ -554,12 +556,12 @@ const perSeg=(cur,act,keys)=>`<div class="seg">${(keys||Object.keys(PERIODS)).ma
 /* ownership & money flows */
 function payOwners(p,cost){
   for(const k in p.shares){const amt=cost*p.shares[k]/100;if(!amt)continue;
-    if(k==='you'){spend(amt);addFlow('capex',amt);basisAdd(p,amt);}else if(k==='inv'){invRec(p).paidIn+=amt;}else if(k!=='pub')RIV(k).cash-=amt;}
+    if(k==='you'){spend(amt);addFlow('capex',amt,p);basisAdd(p,amt);}else if(k==='inv'){invRec(p).paidIn+=amt;}else if(k!=='pub')RIV(k).cash-=amt;}
   p.book+=cost;
 }
 function distribute(p,amt){
   for(const k in p.shares){const a=amt*p.shares[k]/100;if(!a)continue;
-    if(k==='you'){S.cash+=a;if(busy)S.qInc.dist[p.id]=(S.qInc.dist[p.id]||0)+a;else addFlow('sell',a);}
+    if(k==='you'){S.cash+=a;if(busy)S.qInc.dist[p.id]=(S.qInc.dist[p.id]||0)+a;else addFlow('sell',a,p);}
     else if(k==='inv'){invRec(p).q+=a;}
     else if(k!=='pub')RIV(k).cash+=a;}
 }
@@ -571,7 +573,7 @@ function move(p,from,to,pct){pct=Math.min(pct,p.shares[from]||0);if(pct<=0)retur
 function basisAdd(p,amt){if(!amt)return;if(!S.basis)S.basis={};const b=S.basis[p.id]||(S.basis[p.id]={paid:0,interest:0,income:0,since:S.t});b.paid+=amt;}
 function basisScale(p,r){const b=S.basis&&S.basis[p.id];if(!b)return;if(r<=.001){delete S.basis[p.id];return;}b.paid*=r;b.interest*=r;b.income*=r;}
 function basisInterest(){const B=Object.values(S.basis||{});const tot=B.reduce((s,b)=>s+Math.max(0,b.paid),0);if(tot<=0||S.loan<=0)return;
-  const fin=Math.min(1,S.loan/tot);for(const b of B)b.interest+=Math.max(0,b.paid)*fin*loanRate()/400;}
+  const fin=Math.min(1,S.loan/tot);for(const [id,b] of Object.entries(S.basis)){const x=Math.max(0,b.paid)*fin*loanRate()/400;b.interest+=x;if(S.qInc&&S.qInc.intP)S.qInc.intP[id]=(S.qInc.intP[id]||0)+x;}}
 // stakes held before the books began (old saves): start the record at today's value
 function ensureBasis(){if(!S.basis)S.basis={};for(const p of S.props){if((p.shares.you||0)>0&&!S.basis[p.id])S.basis[p.id]={paid:val(p)*p.shares.you/100,interest:0,income:0,since:S.t,est:true};}}
 
@@ -709,7 +711,7 @@ function nextQuarter(){
   if(S.pending.length){showPending();return;}
   busy=true;
   const rep=[],news=[],rivalNews=[];
-  S.qInc={dist:{},interest:0,other:0,capex:S.flow.capex||0,buy:S.flow.buy||0,sell:S.flow.sell||0,prem:S.flow.prem||0};S.flow={capex:0,buy:0,sell:0,prem:0};
+  S.qInc={dist:{},interest:0,other:0,capex:S.flow.capex||0,buy:S.flow.buy||0,sell:S.flow.sell||0,prem:S.flow.prem||0,byP:S.flow.byP||{},intP:{}};S.flow={capex:0,buy:0,sell:0,prem:0,byP:{}};
   const nw0=netWorth();
   S.t++;
   const t=S.t,y=yrOf(t);
@@ -754,7 +756,7 @@ function nextQuarter(){
   S.hist.push({t,nw,cash:S.cash,loan:S.loan});
   {const h0=S.hist[S.hist.length-2],q=S.qInc,st0=h0.nw-h0.cash+h0.loan,st1=stakesVal(),put=q.buy+q.capex-q.sell;
    const earned=(S.cash-S.loan)-(h0.cash-h0.loan)+put,dsum=Object.values(q.dist).reduce((a,b)=>a+b,0);
-   q.other=earned-dsum+q.interest;Object.assign(q,{st0,st1,put,earned,mkt:st1-st0-put,nw0:h0.nw,cash0:h0.cash,loan0:h0.loan,cash1:S.cash,loan1:S.loan});}
+   q.other=earned-dsum+q.interest;q.stk0=S.stk||null;q.stk1=stakeMap();S.stk=q.stk1;Object.assign(q,{st0,st1,put,earned,mkt:st1-st0-put,nw0:h0.nw,cash0:h0.cash,loan0:h0.loan,cash1:S.cash,loan1:S.loan});}
   S.report={t,rep,news,rivalNews,inc:S.qInc,nw,nw0:S.qInc.nw0};S.lastInc=S.qInc;S.qInc.t=t;S.ledger.push(S.qInc);
   // events
   drawEvents();
@@ -770,7 +772,7 @@ function marginCall(){
   const hold=S.props.filter(p=>(p.shares.you||0)>0).sort((a,b)=>val(a)*(a.shares.you)-val(b)*(b.shares.you));
   for(const p of hold){
     if(S.loan<=creditLimit()&&S.cash>=0)break;
-    const pct=p.shares.you;const pr=val(p)/100*pct*.85;move(p,'you','pub',pct);S.cash+=pr;addFlow('sell',pr);
+    const pct=p.shares.you;const pr=val(p)/100*pct*.85;move(p,'you','pub',pct);S.cash+=pr;addFlow('sell',pr,p);
     const pay=Math.min(S.cash,S.loan);S.loan-=pay;S.cash-=pay;sold.push(`your ${pct.toFixed(0)}% of ${p.name}`);
   }
   if(S.loan>creditLimit()+.01||S.cash<-.01){S.over={kind:'fired',why:'The bank called your loans and there was nothing left to sell. Your career in Las Vegas is over.'};}
@@ -782,7 +784,7 @@ function authorities(rep){
   if(S.licWait>0)S.licWait--;
   if(S.license==='licensed'&&rnd()<Math.max(0,S.heat-25)/220){
     if(S.heat>85){S.license='revoked';S.licWait=12;
-      let lost=[];for(const p of S.props){if(mine(p)&&p.status==='op'&&p.floor>0&&(p.shares.you||0)>10){const pct=p.shares.you-10;S.cash+=val(p)/100*pct*.8;addFlow('sell',val(p)/100*pct*.8);move(p,'you','pub',pct);lost.push(p.name);}}
+      let lost=[];for(const p of S.props){if(mine(p)&&p.status==='op'&&p.floor>0&&(p.shares.you||0)>10){const pct=p.shares.you-10;S.cash+=val(p)/100*pct*.8;addFlow('sell',val(p)/100*pct*.8,p);move(p,'you','pub',pct);lost.push(p.name);}}
       rep.push(`🚨 <b>License revoked.</b> The Gaming Commission found you unsuitable. You were forced to sell down in ${lost.join(', ')||'your casinos'}.`);S.conf=clamp(S.conf-30,0,100);S.heat=50;
     }else if(S.heat>55){S.license='suspended';S.licQ=2;rep.push('🚨 <b>License suspended for two quarters</b> after a Gaming Control Board investigation.');S.conf=clamp(S.conf-12,0,100);S.heat-=15;}
     else{const fine=(2+S.heat/10)*infl(S.t);spend(fine);S.qInc.other-=fine;rep.push(`🚨 The Gaming Control Board fines you ${M(fine)} after an investigation.`);S.conf=clamp(S.conf-6,0,100);S.heat-=20;}
@@ -874,13 +876,13 @@ const EVENTS={
   invOut:{w:()=>Object.entries(S.inv).some(([id,r])=>r.low>=2&&P(id).shares.inv>0)?4:0,
     make(){const [id]=Object.entries(S.inv).find(([id,r])=>r.low>=2&&P(id).shares.inv>0);const p=P(id);return{p:id,pct:p.shares.inv};},
     view:a=>{const p=P(a.p),pr=buybackPrice(p,a.pct);return{art:'😠',title:'Your investors want out',text:`Your partners in ${p.name} are furious about their returns. They want out of their ${a.pct.toFixed(0)}% stake.`,
-      ch:[{l:`Buy them out (${M(pr)})`,s:available()>=pr?'Keeps control in your hands.':'You cannot afford this right now.',dis:available()<pr,f(){addFlow('prem',pr-val(p)*a.pct/100);spend(pr);addFlow('buy',pr);move(p,'inv','you',a.pct);basisAdd(p,pr);delete S.inv[a.p];S.conf=clamp(S.conf+3,0,100);return'They take the check and leave.';}},
+      ch:[{l:`Buy them out (${M(pr)})`,s:available()>=pr?'Keeps control in your hands.':'You cannot afford this right now.',dis:available()<pr,f(){addFlow('prem',pr-val(p)*a.pct/100,p);spend(pr);addFlow('buy',pr,p);move(p,'inv','you',a.pct);basisAdd(p,pr);delete S.inv[a.p];S.conf=clamp(S.conf+3,0,100);return'They take the check and leave.';}},
           {l:'Let them sell on the market',s:'Backers −6. Their shares go to outside buyers. You may lose control.',f(){move(p,'inv','pub',a.pct);delete S.inv[a.p];S.conf=clamp(S.conf-6,0,100);return'Their stake is sold to outside buyers.';}},
           {l:'Talk them down',s:'Backers −3. 50% they give you more time; otherwise they are angrier.',f(){const r=S.inv[a.p];S.conf=clamp(S.conf-3,0,100);if(rnd()<.5){r.mood+=20;r.low=0;return'They agree to give you a few more quarters.';}r.mood-=10;return'They hang up on you.';}}]};}},
   rivalOffer:{w:()=>S.props.some(p=>(p.shares.you||0)>=5&&S.rivals.some(r=>(p.shares[r.id]||0)>=20))?.6:0,
     make(){const p=pick(S.props.filter(p=>(p.shares.you||0)>=5&&S.rivals.some(r=>(p.shares[r.id]||0)>=20)));const r=S.rivals.find(r=>(p.shares[r.id]||0)>=20);return{p:p.id,r:r.id,pct:p.shares.you};},
     view:a=>{const p=P(a.p),pr=val(p)/100*a.pct*1.2;return{art:'📞',title:`${RIV(a.r).n} makes an offer`,text:`${RIV(a.r).n} offers ${M(pr)} for your ${a.pct.toFixed(0)}% of ${p.name}. That is 20% above current value.`,html:offerHtml(p,pr,a.pct),
-      ch:[{l:'Take the money',s:'See your books and the analyst above.',f(){S.cash+=pr;addFlow('sell',pr);move(p,'you',a.r,a.pct);return'Done. The papers are signed by Friday.';}},{l:'Decline',s:'',f(){return'You tell them it is not for sale.';}}]};}},
+      ch:[{l:'Take the money',s:'See your books and the analyst above.',f(){S.cash+=pr;addFlow('sell',pr,p);move(p,'you',a.r,a.pct);return'Done. The papers are signed by Friday.';}},{l:'Decline',s:'',f(){return'You tell them it is not for sale.';}}]};}},
   union:{w:()=>yrOf(S.t)>=1989&&myOps().length&&S.t-(S.lastEvt.union||-99)>=12?1:0,
     make:()=>({}),
     view:()=>({art:'✊',title:'The culinary union contract is up',text:'Housekeepers, cooks and bartenders want a raise. The union says it is ready to strike.',
@@ -914,7 +916,7 @@ const EVENTS={
   japan:{cd:16,w:()=>yrOf(S.t)<=1992&&myOps().some(p=>(p.shares.you||0)>=25)?.9:0,
     make(){const p=pick(myOps().filter(p=>(p.shares.you||0)>=25));return{p:p.id};},
     view:a=>{const p=P(a.p),pr=val(p)*.15*1.35,n=annNet(p),gy=n!=null?PAYOUT*n*.15/pr:null;return{art:'🗾',title:'Money from Tokyo',text:`A Tokyo property company, flush with cash from the bubble at home, wants 15% of ${p.name}. They offer ${M(pr)}, 35% over market value, and promise to stay silent partners.`,
-      ch:[{l:`Sell them 15% (${M(pr)})`,s:`Your stake falls to ${(p.shares.you-15).toFixed(0)}%.${gy!=null?` You give up payouts worth ${P1(gy)} a year on that price, against your ${P1(loanRate()/100)} loan.`:''}`,f(){S.cash+=pr;addFlow('sell',pr);move(p,'you','pub',15);return'The deal closes in a week. They send a gift: a very expensive bottle of whisky.';}},
+      ch:[{l:`Sell them 15% (${M(pr)})`,s:`Your stake falls to ${(p.shares.you-15).toFixed(0)}%.${gy!=null?` You give up payouts worth ${P1(gy)} a year on that price, against your ${P1(loanRate()/100)} loan.`:''}`,f(){S.cash+=pr;addFlow('sell',pr,p);move(p,'you','pub',15);return'The deal closes in a week. They send a gift: a very expensive bottle of whisky.';}},
           {l:'Decline',s:'Nothing changes.',f(){return'They buy a golf course in California instead.';}}]};}},
   spectacle:{cd:20,w:()=>yrOf(S.t)>=1989&&yrOf(S.t)<=2002&&myOps().some(p=>p.q>=3&&!(p.buzz>0))?.7:0,
     make(){const p=pick(myOps().filter(p=>p.q>=3&&!(p.buzz>0)));return{p:p.id,x:(4+p.rooms*.002)*infl(S.t)};},
@@ -974,15 +976,15 @@ function drawEvents(){
 function buyStake(p,from,pct){
   pct=Math.min(pct,p.shares[from]||0);if(pct<=0)return;
   const pr=buyPrice(p,from,pct);if(pr>available()+1e-6){toast(`You need ${M(pr)} but only have ${M(available())} in cash and credit.`);return;}
-  const wasMine=mine(p);addFlow('prem',pr-val(p)*pct/100);spend(pr);addFlow('buy',pr);move(p,from,'you',pct);basisAdd(p,pr);
+  const wasMine=mine(p);addFlow('prem',pr-val(p)*pct/100,p);spend(pr);addFlow('buy',pr,p);move(p,from,'you',pct);basisAdd(p,pr);
   if(from!=='pub')RIV(from).cash+=pr;
   toast(`You bought ${pct.toFixed(0)}% of ${p.name} for ${M(pr)}.`);
   if(!wasMine&&mine(p)){p.auto=true;toast(`You now control ${p.name}.${S.license!=='licensed'&&p.floor?' Its casino is dark until you hold a gaming license.':''}`);}
   save();render();openProp(p.id);
 }
-function sellInv(p,pct){if(!canSellInv(p,pct))return;const pr=sellInvPrice(p,pct);move(p,'you','inv',pct);S.cash+=pr;addFlow('sell',pr);invRec(p).paidIn+=pr;toast(`Your investors paid ${M(pr)} for ${pct}% of ${p.name}.`);save();render();openProp(p.id);}
-function sellMkt(p,pct){pct=Math.min(pct,p.shares.you||0);const pr=sellMktPrice(p,pct);move(p,'you','pub',pct);S.cash+=pr;addFlow('sell',pr);toast(`You sold ${pct.toFixed(0)}% of ${p.name} for ${M(pr)}.`);save();render();openProp(p.id);}
-function buyback(p){const pct=p.shares.inv||0;const pr=buybackPrice(p,pct);if(pr>available()){toast('Not enough cash and credit.');return;}addFlow('prem',pr-val(p)*pct/100);spend(pr);addFlow('buy',pr);move(p,'inv','you',pct);basisAdd(p,pr);delete S.inv[p.id];toast(`You bought out your investors in ${p.name}.`);save();render();}
+function sellInv(p,pct){if(!canSellInv(p,pct))return;const pr=sellInvPrice(p,pct);move(p,'you','inv',pct);S.cash+=pr;addFlow('sell',pr,p);invRec(p).paidIn+=pr;toast(`Your investors paid ${M(pr)} for ${pct}% of ${p.name}.`);save();render();openProp(p.id);}
+function sellMkt(p,pct){pct=Math.min(pct,p.shares.you||0);const pr=sellMktPrice(p,pct);move(p,'you','pub',pct);S.cash+=pr;addFlow('sell',pr,p);toast(`You sold ${pct.toFixed(0)}% of ${p.name} for ${M(pr)}.`);save();render();openProp(p.id);}
+function buyback(p){const pct=p.shares.inv||0;const pr=buybackPrice(p,pct);if(pr>available()){toast('Not enough cash and credit.');return;}addFlow('prem',pr-val(p)*pct/100,p);spend(pr);addFlow('buy',pr,p);move(p,'inv','you',pct);basisAdd(p,pr);delete S.inv[p.id];toast(`You bought out your investors in ${p.name}.`);save();render();}
 
 /* =========================================================
    RENDER: HUD, TABS
@@ -1549,6 +1551,36 @@ function openDesigner(id,retheme){
 }
 
 /* ---------- report, events, reviews ---------- */
+function reportByProp(R,q){
+  if(!q.stk0)return`<div class="panel"><h3>By property</h3><p class="hint" style="margin:0">The property-by-property breakdown starts with next quarter's report.</p></div>`;
+  const ids=new Set([...Object.keys(q.stk0),...Object.keys(q.stk1||{}),...Object.keys(q.dist||{}),...Object.keys(q.byP||{})]);
+  const rows=[...ids].map(id=>{const p=P(id),f=(q.byP||{})[id]||{},st0=q.stk0[id]||0,st1=(q.stk1||{})[id]||0,put=(f.buy||0)+(f.capex||0)-(f.sell||0);
+    const pay=(q.dist||{})[id]||0,mkt=st1-st0-put,int=(q.intP||{})[id]||0,net=pay+mkt-int,base=st0+Math.max(0,put);
+    return{p,st0,st1,put,pay,mkt,int,net,base,roi:base>.05?net/base*4:null};}).filter(r=>r.p&&(r.st0>.0005||r.st1>.0005||Math.abs(r.pay)>.0005)).sort((a,b)=>b.net-a.net);
+  if(!rows.length)return'';
+  const T=rows.reduce((a,r)=>{for(const k of ['pay','mkt','int','net','base','put'])a[k]+=r[k];return a;},{pay:0,mkt:0,int:0,net:0,base:0,put:0});
+  const c=(v,l)=>`<td data-l="${l}" class="${v<-.0005?'neg':v>.0005?'pos':''}">${v>.0005?'+':''}${M(v)}</td>`,pc=v=>`<td data-l="Return /yr" class="${v==null?'':v<0?'neg':'pos'}">${v==null?'—':P1(v)}</td>`;
+  const unal=q.interest-T.int;
+  return`<div class="panel"><h3>By property</h3><div class="tscroll"><table class="ctable pl byp"><thead><tr><th>Property</th><th>Paid to you</th><th>Value change</th><th>Interest</th><th>Net gain</th><th>Return /yr</th></tr></thead><tbody>
+  ${rows.map(r=>`<tr><td><b>${esc(r.p.name)}</b><small class="hint" style="display:block">${(r.p.shares.you||0).toFixed(0)}% · worth ${M(r.st1)}${Math.abs(r.put)>.0005?` · ${r.put>0?'put in':'took out'} ${M(Math.abs(r.put))}`:''}</small></td>${c(r.pay,'Paid')}${c(r.mkt,'Value')}${c(-r.int,'Interest')}${c(r.net,'Net')}${pc(r.roi)}</tr>`).join('')}
+  <tr class="tot"><td>All properties</td>${c(T.pay,'Paid')}${c(T.mkt,'Value')}${c(-T.int,'Interest')}${c(T.net,'Net')}${pc(T.base>.05?T.net/T.base*4:null)}</tr></tbody></table></div>
+  <p class="hint" style="margin:8px 0 0">Value change is the change in what your stake is worth, after taking out money you put in or took out. Interest is your loan cost shared across stakes by what you paid for them${unal>.0005?`. ${M(unal)} of interest isn't tied to a property`:''}. Return per year is net gain on what the stake was worth at the start plus anything you put in, times four.</p></div>`;
+}
+function reportROI(R,q){
+  if(q.st0==null)return'';
+  const gain=q.earned+q.mkt,eq=q.nw0,roe=eq>.5?gain/eq*4:null;
+  const ids=Object.keys(q.stk0||{});
+  const pre=(q.st0+Math.max(0,q.put))>.05?((Object.values(q.dist||{}).reduce((a,b)=>a+b,0))+q.mkt)/(q.st0+Math.max(0,q.put))*4:null;
+  const h0=S.hist[0],yrs=(R.t-h0.t)/4,cagr=yrs>=1&&R.nw>0&&h0.nw>0?Math.pow(R.nw/h0.nw,1/yrs)-1:null;
+  const pc=v=>`<div class="${v==null?'':v<0?'neg':'pos'}">${v==null?'—':P1(v)}</div>`;
+  return`<div class="panel"><h3>Your return</h3><div class="kv">
+  <div>Your stakes, before interest<small class="hint" style="display:block">payouts and value change on what they were worth</small></div>${pc(pre)}
+  <div>Your borrowing rate</div><div>${P1(loanRate()/100)}</div>
+  <div class="tot">Return on your own money, net of interest<small class="hint" style="display:block">this quarter's gain on your net worth at the start, annualized</small></div><div class="tot ${roe==null?'':roe<0?'neg':'pos'}">${roe==null?'—':P1(roe)}</div>
+  ${(()=>{const i=S.hist.findIndex(x=>x.t===R.t-4);const a=i>=0?S.hist[i]:null;return a&&a.nw>.5?`<div>Last 4 quarters<small class="hint" style="display:block">net worth ${M(a.nw)} to ${M(R.nw)}</small></div>${pc(R.nw/a.nw-1)}`:'';})()}
+  ${cagr!=null?`<div>Since you arrived in ${yrOf(h0.t)}<small class="hint" style="display:block">${M(h0.nw)} to ${M(R.nw)}, compounded per year</small></div>${pc(cagr)}`:''}</div>
+  <p class="hint" style="margin:8px 0 0">${R.nw>.5&&q.st1>R.nw*1.5?`Your stakes are worth ${(q.st1/R.nw).toFixed(1)}× your net worth, so every point they earn above your borrowing rate is multiplied for you, and so is every point below. `:''}When your stakes earn more than your borrowing rate, borrowing lifts your return. When they earn less, it drags it down.</p></div>`;
+}
 function reportBridge(R,q,dsum){
   const sg=v=>`<div class="${v<-.0005?'neg':v>.0005?'pos':''}">${v>.0005?'+':''}${M(v)}</div>`;
   if(q.st0==null)return`<div class="panel"><h3>Your quarter</h3><div class="kv"><div>Payouts from properties</div>${sg(dsum)}<div>Loan interest</div>${sg(-q.interest)}<div class="tot">Net worth</div><div class="tot">${M(R.nw)}</div></div></div>`;
@@ -1569,7 +1601,7 @@ function openReport(){
   const inc=R.inc;const dsum=Object.values(inc.dist).reduce((a,b)=>a+b,0);
   const all=[...R.news,...R.rep,...R.rivalNews];
   openSheet(`<p class="newsdate">${dateStr(R.t)} · Quarterly edition</p><h2 class="news">The Strip Ledger</h2>
-  ${reportBridge(R,inc,dsum)}
+  ${reportBridge(R,inc,dsum)}${reportByProp(R,inc)}${reportROI(R,inc)}
   <div class="panel">${all.length?all.map(s=>`<div class="story">${s}</div>`).join(''):'<div class="story">A quiet quarter on the Strip.</div>'}</div>
   <button class="btn primary" data-a="reportdone">${S.pending.length?'Continue':'Back to the Strip'}</button>`);
 }
@@ -1634,7 +1666,7 @@ function showOver(){
 
 /* ---------- intro & menu ---------- */
 // bump with every release, so a player can say which build they are on
-const APP_VERSION='0.6';
+const APP_VERSION='0.7';
 function showIntro(){
   const saved=loadSave();
   openSheet(`<div class="logo-big">HOUSE EDGE</div><p class="ver">Version ${APP_VERSION}</p><p class="lede">Las Vegas, 1988.</p>
