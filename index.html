@@ -334,7 +334,7 @@ const valMult=t=>5.5*(.8+.3*macro(t));
 // cheap money lifts every multiple a little, and dear money squeezes them
 const rateMult=()=>clamp(Math.pow(11.5/loanRate(),.35),.85,1.3);
 // how the market prices one hotel: growth, upkeep and a mood that drifts
-function reprice(p,first){if(p.status!=='op'){p.vm=1;return;}
+function reprice(p,first){if(p.status!=='op'){p.vm=1;return;}if(!first&&p.vm!=null&&(p.disrupt<1||(p.project&&!p.project.permitLeft&&['renovate','upgrade','retheme','expand'].includes(p.project.kind))))return;
   if(p.sent==null)p.sent=.9+rnd()*.2;else p.sent=clamp(p.sent+(rnd()-.5)*.08+(1-p.sent)*.08,.8,1.2);
   const h=(p.qh||[]).slice(-8);let g=0;if(h.length>=4){const fc=forecastQ(p),n=h.slice(-4).reduce((a,r)=>a+r[13],0);if(fc&&n>.2)g=clamp(fc.net/n-1,-.3,.3);}
   const tgt=(1+g*.8)*(.85+.15*p.cond/100)/.94*p.sent;p.vm=first||p.vm==null?tgt:p.vm*.6+tgt*.4;}
@@ -348,13 +348,21 @@ const mine=p=>ctrl(p)==='you';
 function val(p){
   const land=landVal(p);
   if(p.status==='lot')return land;
-  if(p.status==='build')return land+p.book;
+  if(p.status==='build')return land+p.book+devGain(p);
   const n=p.ttm.length;
   const ann=n?p.ttm.reduce((a,b)=>a+b,0)/n*4:0;
   const floor=(land+p.book)*.55;
-  const v=Math.max(land,ann*valMult(S.t)*rateMult()*(p.vm||1),floor);
+  const wip=p.project&&p.project.kind!=='implode'?(p.project.paid||0)*.9:0;
+  const v=Math.max(land,ann*valMult(S.t)*rateMult()*(p.vm||1),floor)+wip;
   return n<2?Math.max(v,land+p.book*.9):v;
 }
+// what an appraiser would add for a resort going up: its value when finished, judged by
+// what similar hotels on the Strip earn per room, less what it costs, recognised as it is built
+function netPerRoom(q){let n=0,r=0;for(const o of S.props){if(o.status!=='op'||!o.rooms)continue;const a=annNet(o);if(a==null)continue;const w=Math.pow(.6,Math.abs(o.q-q));n+=a/o.rooms*w;r+=w;}return r?n/r:0;}
+function devGain(p){const pr=p.project;if(!pr||pr.kind!=='build'||!pr.spec)return 0;
+  const done=(pr.q-pr.qLeft)/pr.q;if(done<=0)return 0;
+  const fin=pr.spec.rooms*netPerRoom(pr.spec.q)*valMult(S.t)*rateMult();
+  return Math.max(0,fin-landVal(p)-pr.cost)*done*.6;}
 const stakesVal=()=>S.props.reduce((s,p)=>s+(p.shares.you||0)/100*val(p),0);
 const netWorth=()=>S.cash-S.loan+stakesVal();
 const creditLimit=()=>(TITLE_CREDIT[S.title]*infl(S.t)+advRate()*stakesVal())*S.creditBonus;
@@ -448,7 +456,7 @@ function simulateMarket(dry){
   const ops=S.props.filter(p=>p.status==='op');
   for(const p of ops){if(p.auto)p.set=autoSet(p);}
   const alloc={};ops.forEach(p=>alloc[p.id]={hr:0,conv:0,fam:0,leis:0,bud:0});
-  const caps={};ops.forEach(p=>{let c=p.rooms*91;if(p.project&&!p.project.permitLeft){if(p.project.kind==='renovate')c*=.6;if(p.project.kind==='retheme')c*=.7;if(p.project.kind==='implode')c=0;}caps[p.id]=c*p.disrupt;});
+  const caps={};ops.forEach(p=>{let c=p.rooms*91;if(p.project&&!p.project.permitLeft){if(p.project.kind==='renovate'||p.project.kind==='upgrade')c*=.6;if(p.project.kind==='retheme')c*=.7;if(p.project.kind==='implode')c=0;}caps[p.id]=c*p.disrupt;});
   for(const seg of SEGS){
     const Ds=D*sh[seg];const w={};let sum=0;
     for(const p of ops){w[p.id]=Math.pow(attraction(p,seg),1.6);sum+=w[p.id];}
@@ -486,7 +494,8 @@ function simulateMarket(dry){
     const cost=Object.values(c).reduce((s,v)=>s+v,0);
     const ebitda=rev-cost;const pot=ebitda+lostG*(1-.28*staffM-.0675-{tight:.04,normal:.09,generous:.16}[set.comps]);
     p.last={rev:{rooms,gaming,fb,other},cost:c,revenue:rev,costs:cost,ebitda,occ:caps[p.id]?rn/(p.rooms*91):0,rn,mix:{...a},noLic,capHit:gRaw>cap&&p.floor>0};
-    if(!dry){p.ttm.push(pot);if(p.ttm.length>4)p.ttm.shift();}
+    const closed=p.disrupt<1||(p.project&&!p.project.permitLeft&&['renovate','upgrade','retheme'].includes(p.project.kind));
+    if(!dry){if(p.fresh){p.ttm=[pot,pot,pot,pot].map(x=>x*.95);p.fresh=false;}else if(!closed||!p.ttm.length){p.ttm.push(pot);if(p.ttm.length>4)p.ttm.shift();}}
     else{p.ttm=[pot,pot,pot,pot];}
   }
 }
@@ -679,15 +688,15 @@ function progressProject(p,rep){
   const pr=p.project;if(!pr)return;
   if(pr.permitLeft>0){pr.permitLeft--;if(pr.permitLeft===0&&mine(p))rep.push(`📋 The county approved permits for <b>${esc(p.name)}</b>. Work begins.`);return;}
   if(pr.delay>0){pr.delay--;return;}
-  payOwners(p,pr.cost/pr.q);pr.qLeft--;
+  payOwners(p,pr.cost/pr.q);pr.paid=(pr.paid||0)+pr.cost/pr.q;pr.qLeft--;
   if(pr.qLeft>0)return;
   p.project=null;const k=pr.kind;const who=mine(p)?'':`${esc(ownerName(ctrl(p)))}: `;
-  if(k==='build'){const s=pr.spec;Object.assign(p,{status:'op',rooms:s.rooms,q:s.q,theme:s.theme,am:[...s.am],floor:s.floor,mix:s.mix,games:[...s.games],cond:100,opened:yf(S.t),built:yrOf(S.t),ttm:[]});p.name=s.name||p.name;p.set=autoSet(p);rep.push(`🎉 ${who}<b>${esc(p.name)}</b> opens with ${s.rooms.toLocaleString()} rooms.`);}
+  if(k==='build'){const s=pr.spec;Object.assign(p,{status:'op',rooms:s.rooms,q:s.q,theme:s.theme,am:[...s.am],floor:s.floor,mix:s.mix,games:[...s.games],cond:100,opened:yf(S.t),built:yrOf(S.t),ttm:[],fresh:true});p.name=s.name||p.name;p.set=autoSet(p);rep.push(`🎉 ${who}<b>${esc(p.name)}</b> opens with ${s.rooms.toLocaleString()} rooms.`);}
   else if(k==='renovate'){p.cond=95;rep.push(`🔧 ${who}Renovation finished at <b>${esc(p.name)}</b>.`);}
-  else if(k==='upgrade'){p.q++;p.cond=Math.max(p.cond,90);p.set=autoSet(p);rep.push(`⭐ ${who}<b>${esc(p.name)}</b> is now a ${p.q}-star property.`);}
-  else if(k==='expand'){p.rooms+=pr.add;rep.push(`🏗️ ${who}A new ${pr.add}-room tower opens at <b>${esc(p.name)}</b>.`);}
+  else if(k==='upgrade'){p.q++;p.cond=Math.max(p.cond,90);p.set=autoSet(p);p.fresh=true;rep.push(`⭐ ${who}<b>${esc(p.name)}</b> is now a ${p.q}-star property.`);}
+  else if(k==='expand'){p.rooms+=pr.add;p.fresh=true;rep.push(`🏗️ ${who}A new ${pr.add}-room tower opens at <b>${esc(p.name)}</b>.`);}
   else if(k==='amenity'){p.am.push(pr.am);rep.push(`${AMEN[pr.am].i} ${who}<b>${esc(p.name)}</b> opens its ${AMEN[pr.am].n.toLowerCase()}.`);}
-  else if(k==='retheme'){p.theme=pr.theme;p.opened=yf(S.t);p.cond=Math.max(p.cond,85);rep.push(`🎨 ${who}<b>${esc(p.name)}</b> reopens as ${THEMES[pr.theme].n}.`);}
+  else if(k==='retheme'){p.theme=pr.theme;p.fresh=true;p.opened=yf(S.t);p.cond=Math.max(p.cond,85);rep.push(`🎨 ${who}<b>${esc(p.name)}</b> reopens as ${THEMES[pr.theme].n}.`);}
   else if(k==='condo'){const proceeds=300*.28*houseIdx(S.t)*infl(0)*(p.q/3)*macro(S.t);distribute(p,proceeds);rep.push(`🏙️ ${who}Condo units at <b>${esc(p.name)}</b> sell out for ${M(proceeds)}.`);}
   else if(k==='implode'){Object.assign(p,{status:'lot',rooms:0,q:0,theme:null,am:[],floor:0,games:[],cond:0,ttm:[],last:null,book:0,boost:null});rep.push(`💥 ${who}<b>${esc(p.name)}</b> comes down in a spectacular implosion. Thousands watch from the Strip.`);if(mine(p))S.rep=clamp(S.rep+3,0,100);if(!p.name.includes('Site'))p.name=p.name.replace(/^The /,'')+' Site';}
 }
@@ -830,92 +839,129 @@ const EVENTS={
   skim:{w:()=>S.license==='licensed'&&!S.skim&&myOps().some(p=>p.floor>0)?1.2*mobEra():0,
     make(){const p=pick(myOps().filter(p=>p.floor>0));return{p:p.id};},
     view:a=>({art:'🎩',title:'A visitor from back east',text:`A soft-spoken man in a very good suit visits the count room at ${P(a.p).name}. His friends could help "manage" the cash, and there would be an envelope for you every quarter.`,
-      ch:[{l:'Take the envelope',s:'Extra cash every quarter. The Gaming Control Board will notice eventually.',f(){S.skim={p:a.p,q:8};S.mob=clamp(S.mob+25,-100,100);S.heat=clamp(S.heat+8,0,100);return'The envelopes start arriving.';}},
-          {l:'Politely decline',s:'They will remember this.',f(){S.mob=clamp(S.mob-12,-100,100);return'He smiles, thanks you for your time, and leaves.';}},
-          {l:'Call the Gaming Control Board',s:'Earns trust with regulators and makes enemies.',f(){S.mob=clamp(S.mob-40,-100,100);S.heat=clamp(S.heat-12,0,100);S.city=clamp(S.city+5,0,100);S.conf=clamp(S.conf+3,0,100);return'Agents thank you. Back east, someone is very unhappy.';}}]})},
+      ch:[{l:'Take the envelope',s:'About $0.5M+ a quarter for two years. Syndicate +25, Heat +8 now and +6 every quarter.',f(){S.skim={p:a.p,q:8};S.mob=clamp(S.mob+25,-100,100);S.heat=clamp(S.heat+8,0,100);return'The envelopes start arriving.';}},
+          {l:'Politely decline',s:'Syndicate −12.',f(){S.mob=clamp(S.mob-12,-100,100);return'He smiles, thanks you for your time, and leaves.';}},
+          {l:'Call the Gaming Control Board',s:'Heat −12, County +5, Backers +3. Syndicate −40: expect trouble.',f(){S.mob=clamp(S.mob-40,-100,100);S.heat=clamp(S.heat-12,0,100);S.city=clamp(S.city+5,0,100);S.conf=clamp(S.conf+3,0,100);return'Agents thank you. Back east, someone is very unhappy.';}}]})},
   labor:{w:()=>S.flagNewBuild&&P(S.flagNewBuild)&&mobEra()>.15?3:0,
     make(){const id=S.flagNewBuild;S.flagNewBuild=null;return{p:id,x:2*infl(S.t)};},
     view:a=>({art:'👷',title:'Labor peace, for a price',text:`A union "consultant" says the ${P(a.p).name} job could run very smoothly. Or it could have a lot of problems. He suggests ${M(a.x)} would keep things smooth.`,
-      ch:[{l:`Pay ${M(a.x)}`,s:'No delays. A little more attention from regulators.',f(){spend(a.x);S.mob=clamp(S.mob+10,-100,100);S.heat=clamp(S.heat+4,0,100);return'Work proceeds without a hitch.';}},
-          {l:'Refuse',s:'Risk delays on site.',f(){S.mob=clamp(S.mob-10,-100,100);const p=P(a.p);if(p&&p.project&&rnd()<.5*mobEra()+.15){p.project.delay=(p.project.delay||0)+2;return'Trucks stop arriving. The project slips two quarters.';}return'The consultant shrugs. Nothing happens, for now.';}}]})},
+      ch:[{l:`Pay ${M(a.x)}`,s:'No delays. Syndicate +10, Heat +4.',f(){spend(a.x);S.mob=clamp(S.mob+10,-100,100);S.heat=clamp(S.heat+4,0,100);return'Work proceeds without a hitch.';}},
+          {l:'Refuse',s:'Syndicate −10. Roughly a 1 in 3 chance the project slips two quarters.',f(){S.mob=clamp(S.mob-10,-100,100);const p=P(a.p);if(p&&p.project&&rnd()<.5*mobEra()+.15){p.project.delay=(p.project.delay||0)+2;return'Trucks stop arriving. The project slips two quarters.';}return'The consultant shrugs. Nothing happens, for now.';}}]})},
   backlash:{w:()=>S.mob<-35&&mobEra()>.1&&myOps().length?2:0,
     make(){return{p:pick(myOps()).id,x:3*infl(S.t)};},
     view:a=>({art:'🔥',title:`Trouble at ${P(a.p).name}`,text:`A wildcat walkout empties the kitchens and a small fire breaks out in a linen room. Everyone knows who is sending the message.`,
-      ch:[{l:`Pay what they ask (${M(a.x)})`,s:'Trouble stops. Regulators may hear about it.',f(){spend(a.x);S.mob=clamp(S.mob+40,-100,100);S.heat=clamp(S.heat+8,0,100);return'The walkout ends overnight.';}},
-          {l:'Ride it out',s:'The property runs at reduced capacity next quarter.',f(){P(a.p).disrupt=.65;S.rep=clamp(S.rep-4,0,100);return'Guests complain about slow service.';}},
-          {l:'Go to the FBI',s:'Regulators like it. Risk of more trouble.',f(){S.heat=clamp(S.heat-6,0,100);S.mob=clamp(S.mob-20,-100,100);S.city=clamp(S.city+6,0,100);S.conf=clamp(S.conf+2,0,100);if(rnd()<.4){P(a.p).disrupt=.75;return'Agents open a file. Another incident hits the property.';}return'Agents open a file. Things go quiet.';}}]})},
+      ch:[{l:`Pay what they ask (${M(a.x)})`,s:'Trouble stops. Syndicate +40, Heat +8.',f(){spend(a.x);S.mob=clamp(S.mob+40,-100,100);S.heat=clamp(S.heat+8,0,100);return'The walkout ends overnight.';}},
+          {l:'Ride it out',s:'Runs at 65% capacity next quarter. Public image −4.',f(){P(a.p).disrupt=.65;S.rep=clamp(S.rep-4,0,100);return'Guests complain about slow service.';}},
+          {l:'Go to the FBI',s:'Heat −6, County +6, Backers +2, Syndicate −20. 40% chance of another incident (75% capacity next quarter).',f(){S.heat=clamp(S.heat-6,0,100);S.mob=clamp(S.mob-20,-100,100);S.city=clamp(S.city+6,0,100);S.conf=clamp(S.conf+2,0,100);if(rnd()<.4){P(a.p).disrupt=.75;return'Agents open a file. Another incident hits the property.';}return'Agents open a file. Things go quiet.';}}]})},
   audit:{w:()=>S.license==='licensed'?.25+S.heat/60:0,
     make:()=>({x:.3*infl(S.t)}),
     view:a=>({art:'🕵️',title:'The auditors are here',text:'Gaming Control Board auditors arrive unannounced and ask for the count room records.',
-      ch:[{l:'Open the books',s:S.skim?'They will find the skim.':'Costs a little in staff time.',f(){spend(a.x);if(S.skim){const fine=5*infl(S.t);spend(fine);S.heat=clamp(S.heat+20,0,100);S.skim=null;S.conf=clamp(S.conf-10,0,100);return`They find irregularities. You pay a ${M(fine)} fine and the arrangement ends.`;}S.heat=clamp(S.heat-10,0,100);return'Everything checks out. The Board notes your cooperation.';}},
-          {l:'Lawyer up',s:'Buys time and looks bad.',f(){spend(1*infl(S.t));S.heat=clamp(S.heat+5,0,100);return rnd()<.5?'The auditors leave with nothing. For now.':'The auditors leave, but they will be back.';}}]})},
+      ch:[{l:'Open the books',s:S.skim?`They will find the skim: a ${M(5*infl(S.t))} fine, Heat +20, Backers −10.`:`Costs ${M(a.x)}. Heat −10.`,f(){spend(a.x);if(S.skim){const fine=5*infl(S.t);spend(fine);S.heat=clamp(S.heat+20,0,100);S.skim=null;S.conf=clamp(S.conf-10,0,100);return`They find irregularities. You pay a ${M(fine)} fine and the arrangement ends.`;}S.heat=clamp(S.heat-10,0,100);return'Everything checks out. The Board notes your cooperation.';}},
+          {l:'Lawyer up',s:`Costs ${M(1*infl(S.t))} in legal fees. Heat +5.`,f(){spend(1*infl(S.t));S.heat=clamp(S.heat+5,0,100);return rnd()<.5?'The auditors leave with nothing. For now.':'The auditors leave, but they will be back.';}}]})},
   whale:{w:()=>myOps().some(p=>p.q>=4&&p.games.includes('bacc'))&&S.license==='licensed'?.8:0,
     make(){const p=pick(myOps().filter(p=>p.q>=4&&p.games.includes('bacc')));return{p:p.id,x:5*infl(S.t)};},
     view:a=>({art:'🀄',title:'A whale wants a marker',text:`A legendary Hong Kong baccarat player wants a ${M(a.x)} line of credit at ${P(a.p).name}. If he loses, the house wins big. If he gets lucky, it hurts.`,
-      ch:[{l:'Extend the credit',s:'Roughly even odds, tilted slightly to the house.',f(){const p=P(a.p),sh=((p.shares.you||0))/100;if(rnd()<.56){const w=a.x*.8;S.cash+=w*sh;S.rep=clamp(S.rep+2,0,100);return`He loses big. Your share of the win is ${M(w*sh)}.`;}const l=a.x*.6;spend(l*sh);return`He gets hot and walks away up. Your share of the loss is ${M(l*sh)}.`;}},
-          {l:'Decline',s:'Word gets around that you are cautious.',f(){S.rep=clamp(S.rep-2,0,100);return'He takes his action across the street.';}}]})},
+      ch:[{l:'Extend the credit',s:`56% he loses: your share of ${M(a.x*.8)}. 44% he wins: your share of a ${M(a.x*.6)} loss.`,f(){const p=P(a.p),sh=((p.shares.you||0))/100;if(rnd()<.56){const w=a.x*.8;S.cash+=w*sh;S.rep=clamp(S.rep+2,0,100);return`He loses big. Your share of the win is ${M(w*sh)}.`;}const l=a.x*.6;spend(l*sh);return`He gets hot and walks away up. Your share of the loss is ${M(l*sh)}.`;}},
+          {l:'Decline',s:'Public image −2.',f(){S.rep=clamp(S.rep-2,0,100);return'He takes his action across the street.';}}]})},
   headliner:{w:()=>myOps().some(p=>p.am.includes('showroom')&&!p.boost)?.8:0,
     make(){const p=pick(myOps().filter(p=>p.am.includes('showroom')&&!p.boost));return{p:p.id,x:2.5*infl(S.t)};},
     view:a=>({art:'🎤',title:'A headliner wants a residency',text:`Vic Valentine, the most famous crooner in America, offers a four-quarter residency at ${P(a.p).name} for ${M(a.x)} a quarter.`,
-      ch:[{l:'Sign him',s:'More leisure and convention guests for a year.',f(){P(a.p).boost={q:4,m:{leis:1.3,conv:1.05,hr:1.05},cost:a.x};return'Vic\'s name goes up in lights.';}},{l:'Pass',s:'',f(){return'He signs across the street.';}}]})},
+      ch:[{l:'Sign him',s:`Four quarters: leisure guests +30%, others +5%. Costs ${M(a.x)} a quarter, split by stake.`,f(){P(a.p).boost={q:4,m:{leis:1.3,conv:1.05,hr:1.05},cost:a.x};return'Vic\'s name goes up in lights.';}},{l:'Pass',s:'',f(){return'He signs across the street.';}}]})},
   fight:{w:()=>yrOf(S.t)>=1990&&myOps().some(p=>p.am.includes('arena')||p.am.includes('convention'))?.6:0,
     make(){const p=pick(myOps().filter(p=>p.am.includes('arena')||p.am.includes('convention')));return{p:p.id,x:5*infl(S.t)};},
     view:a=>({art:'🥊',title:'Title fight night',text:`A promoter wants to stage a heavyweight title fight at ${P(a.p).name}. The site fee is ${M(a.x)}. The gate, the TV deal and the betting could pay off handsomely.`,
-      ch:[{l:'Host the fight',s:'Usually profitable. Sometimes a dud.',f(){const p=P(a.p);payOwners(p,a.x);p.bonusRev=(p.bonusRev||0)+a.x*(.6+rnd()*1.8);S.rep=clamp(S.rep+3,0,100);return'Tickets go on sale. Results show up in next quarter\'s numbers.';}},{l:'Pass',s:'',f(){return'The fight goes elsewhere.';}}]})},
+      ch:[{l:'Host the fight',s:`Pays ${M(a.x)}, split by stake. Brings in between ${M(a.x*.6)} and ${M(a.x*2.4)} of revenue next quarter. Public image +3.`,f(){const p=P(a.p);payOwners(p,a.x);p.bonusRev=(p.bonusRev||0)+a.x*(.6+rnd()*1.8);S.rep=clamp(S.rep+3,0,100);return'Tickets go on sale. Results show up in next quarter\'s numbers.';}},{l:'Pass',s:'',f(){return'The fight goes elsewhere.';}}]})},
   invOut:{w:()=>Object.entries(S.inv).some(([id,r])=>r.low>=2&&P(id).shares.inv>0)?4:0,
     make(){const [id]=Object.entries(S.inv).find(([id,r])=>r.low>=2&&P(id).shares.inv>0);const p=P(id);return{p:id,pct:p.shares.inv};},
     view:a=>{const p=P(a.p),pr=buybackPrice(p,a.pct);return{art:'😠',title:'Your investors want out',text:`Your partners in ${p.name} are furious about their returns. They want out of their ${a.pct.toFixed(0)}% stake.`,
       ch:[{l:`Buy them out (${M(pr)})`,s:available()>=pr?'Keeps control in your hands.':'You cannot afford this right now.',dis:available()<pr,f(){addFlow('prem',pr-val(p)*a.pct/100);spend(pr);addFlow('buy',pr);move(p,'inv','you',a.pct);basisAdd(p,pr);delete S.inv[a.p];S.conf=clamp(S.conf+3,0,100);return'They take the check and leave.';}},
-          {l:'Let them sell on the market',s:'Their shares go to outside buyers. You may lose control.',f(){move(p,'inv','pub',a.pct);delete S.inv[a.p];S.conf=clamp(S.conf-6,0,100);return'Their stake is sold to outside buyers.';}},
-          {l:'Talk them down',s:'Even odds they give you more time.',f(){const r=S.inv[a.p];S.conf=clamp(S.conf-3,0,100);if(rnd()<.5){r.mood+=20;r.low=0;return'They agree to give you a few more quarters.';}r.mood-=10;return'They hang up on you.';}}]};}},
+          {l:'Let them sell on the market',s:'Backers −6. Their shares go to outside buyers. You may lose control.',f(){move(p,'inv','pub',a.pct);delete S.inv[a.p];S.conf=clamp(S.conf-6,0,100);return'Their stake is sold to outside buyers.';}},
+          {l:'Talk them down',s:'Backers −3. 50% they give you more time; otherwise they are angrier.',f(){const r=S.inv[a.p];S.conf=clamp(S.conf-3,0,100);if(rnd()<.5){r.mood+=20;r.low=0;return'They agree to give you a few more quarters.';}r.mood-=10;return'They hang up on you.';}}]};}},
   rivalOffer:{w:()=>S.props.some(p=>(p.shares.you||0)>=5&&S.rivals.some(r=>(p.shares[r.id]||0)>=20))?.6:0,
     make(){const p=pick(S.props.filter(p=>(p.shares.you||0)>=5&&S.rivals.some(r=>(p.shares[r.id]||0)>=20)));const r=S.rivals.find(r=>(p.shares[r.id]||0)>=20);return{p:p.id,r:r.id,pct:p.shares.you};},
     view:a=>{const p=P(a.p),pr=val(p)/100*a.pct*1.2;return{art:'📞',title:`${RIV(a.r).n} makes an offer`,text:`${RIV(a.r).n} offers ${M(pr)} for your ${a.pct.toFixed(0)}% of ${p.name}. That is 20% above current value.`,html:offerHtml(p,pr,a.pct),
-      ch:[{l:'Take the money',s:'',f(){S.cash+=pr;addFlow('sell',pr);move(p,'you',a.r,a.pct);return'Done. The papers are signed by Friday.';}},{l:'Decline',s:'',f(){return'You tell them it is not for sale.';}}]};}},
+      ch:[{l:'Take the money',s:'See your books and the analyst above.',f(){S.cash+=pr;addFlow('sell',pr);move(p,'you',a.r,a.pct);return'Done. The papers are signed by Friday.';}},{l:'Decline',s:'',f(){return'You tell them it is not for sale.';}}]};}},
   union:{w:()=>yrOf(S.t)>=1989&&myOps().length&&S.t-(S.lastEvt.union||-99)>=12?1:0,
     make:()=>({}),
     view:()=>({art:'✊',title:'The culinary union contract is up',text:'Housekeepers, cooks and bartenders want a raise. The union says it is ready to strike.',
-      ch:[{l:'Agree to raises',s:'Staff costs rise 4% across your properties.',f(){S.wage*=1.04;S.city=clamp(S.city+3,0,100);return'Contract signed. Labor peace for three years.';}},
-          {l:'Play hardball',s:'They might fold. They might walk.',f(){if(rnd()<.6){myOps().forEach(p=>p.disrupt=.8);S.rep=clamp(S.rep-3,0,100);return'They walk out. Picket lines go up on the Strip.';}return'The union backs down.';}}]})},
+      ch:[{l:'Agree to raises',s:'Staff costs +4% for good. County +3.',f(){S.wage*=1.04;S.city=clamp(S.city+3,0,100);return'Contract signed. Labor peace for three years.';}},
+          {l:'Play hardball',s:'60% they strike: every property you run at 80% next quarter, Public image −3. 40% they back down.',f(){if(rnd()<.6){myOps().forEach(p=>p.disrupt=.8);S.rep=clamp(S.rep-3,0,100);return'They walk out. Picket lines go up on the Strip.';}return'The union backs down.';}}]})},
   firecode:{w:()=>myOps().some(p=>p.cond<35)?1.2:0,
     make(){const p=pick(myOps().filter(p=>p.cond<35));return{p:p.id,x:(1+p.rooms*.003)*infl(S.t)};},
     view:a=>({art:'🧯',title:'Fire marshals cite your property',text:`Inspectors cite ${P(a.p).name} for old wiring and missing sprinklers.`,
-      ch:[{l:`Fix it now (${M(a.x)})`,s:'Condition improves.',f(){payOwners(P(a.p),a.x);P(a.p).cond=clamp(P(a.p).cond+12,0,100);return'Work crews fix the problems.';}},
-          {l:'Appeal and delay',s:'Saves money. Something could go badly wrong.',f(){if(rnd()<.3){const p=P(a.p);p.disrupt=.3;S.rep=clamp(S.rep-10,0,100);S.conf=clamp(S.conf-8,0,100);spend(4*infl(S.t)*(p.shares.you||0)/100);return'A fire breaks out weeks later. Guests are evacuated and the lawsuits begin.';}return'The appeal drags on. Nothing happens.';}}]})},
+      ch:[{l:`Fix it now (${M(a.x)})`,s:'Split by stake. Condition +12.',f(){payOwners(P(a.p),a.x);P(a.p).cond=clamp(P(a.p).cond+12,0,100);return'Work crews fix the problems.';}},
+          {l:'Appeal and delay',s:'Free. 30% chance of a fire: 30% capacity next quarter, Public image −10, Backers −8, plus lawsuits.',f(){if(rnd()<.3){const p=P(a.p);p.disrupt=.3;S.rep=clamp(S.rep-10,0,100);S.conf=clamp(S.conf-8,0,100);spend(4*infl(S.t)*(p.shares.you||0)/100);return'A fire breaks out weeks later. Guests are evacuated and the lawsuits begin.';}return'The appeal drags on. Nothing happens.';}}]})},
   rezone:{w:()=>S.props.some(p=>mine(p)&&p.status!=='build'&&!p.rezoned)?.5:0,
     make(){const p=pick(S.props.filter(p=>mine(p)&&p.status!=='build'&&!p.rezoned));return{p:p.id,x:3*infl(S.t)};},
     view:a=>({art:'🗺️',title:'A density deal',text:`The county will rezone ${P(a.p).name} for taller towers if you fund a new freeway interchange for ${M(a.x)}.`,
-      ch:[{l:'Fund the interchange',s:'25% more buildable rooms on the site.',f(){spend(a.x);const p=P(a.p);p.acres=Math.round(p.acres*1.25);p.rezoned=true;S.city=clamp(S.city+6,0,100);return'Rezoning approved.';}},{l:'No thanks',s:'',f(){return'The county moves on.';}}]})},
+      ch:[{l:'Fund the interchange',s:'Buildable rooms +25%. County +6.',f(){spend(a.x);const p=P(a.p);p.acres=Math.round(p.acres*1.25);p.rezoned=true;S.city=clamp(S.city+6,0,100);return'Rezoning approved.';}},{l:'No thanks',s:'',f(){return'The county moves on.';}}]})},
   tv:{w:()=>myOps().length?.5:0,
     make(){return{p:pick(myOps()).id};},
     view:a=>({art:'📺',title:'Lights, camera',text:`A hit TV detective series wants to film a season at ${P(a.p).name}.`,
-      ch:[{l:'Sure, roll cameras',s:'Buzz and a better public image.',f(){P(a.p).buzz=6;S.rep=clamp(S.rep+6,0,100);return'The show films all spring.';}},{l:'No cameras',s:'',f(){return'They film across the street.';}}]})},
+      ch:[{l:'Sure, roll cameras',s:'More walk-in guests for six quarters. Public image +6.',f(){P(a.p).buzz=6;S.rep=clamp(S.rep+6,0,100);return'The show films all spring.';}},{l:'No cameras',s:'',f(){return'They film across the street.';}}]})},
   reporter:{w:()=>S.mob>30||S.skim?1.5:0,
     make:()=>({}),
     view:()=>({art:'🗞️',title:'A reporter is asking questions',text:'An investigative reporter is asking about your friends from back east.',
-      ch:[{l:'Stonewall',s:'Even odds the story runs.',f(){if(rnd()<.5){S.rep=clamp(S.rep-10,0,100);S.heat=clamp(S.heat+15,0,100);S.conf=clamp(S.conf-10,0,100);return'The story runs on the front page.';}return'The story never runs.';}},
-          {l:'Cut all ties',s:'Ends any arrangements. The mob will not be pleased.',f(){S.mob=clamp(S.mob-50,-100,100);S.skim=null;S.heat=clamp(S.heat-5,0,100);return'You make it clear you are out.';}}]})},
+      ch:[{l:'Stonewall',s:'50% the story runs: Public image −10, Heat +15, Backers −10.',f(){if(rnd()<.5){S.rep=clamp(S.rep-10,0,100);S.heat=clamp(S.heat+15,0,100);S.conf=clamp(S.conf-10,0,100);return'The story runs on the front page.';}return'The story never runs.';}},
+          {l:'Cut all ties',s:'Ends any arrangement. Heat −5, Syndicate −50.',f(){S.mob=clamp(S.mob-50,-100,100);S.skim=null;S.heat=clamp(S.heat-5,0,100);return'You make it clear you are out.';}}]})},
   condoOffer:{w:()=>yrOf(S.t)>=2004&&yrOf(S.t)<=2007&&S.props.some(p=>mine(p)&&p.status==='lot')?2:0,
     make(){const p=pick(S.props.filter(p=>mine(p)&&p.status==='lot'));return{p:p.id};},
     view:a=>{const p=P(a.p),pr=landVal(p)*1.5;return{art:'🏙️',title:'A condo developer comes calling',text:`A developer offers ${M(pr)} for ${p.name}, 50% above its land value. Everyone is building condos. Your share of the price is ${M(pr*(p.shares.you||0)/100)}.`,html:offerHtml(p,pr*(p.shares.you||0)/100,p.shares.you||0),
       ch:[{l:'Sell the site',s:'Proceeds go to all owners by stake.',f(){distribute(p,pr);for(const k of Object.keys(p.shares))if(k!=='pub')move(p,k,'pub',p.shares[k]);delete S.inv[p.id];return'Sold. You read about the tower in the papers.';}},{l:'Hold',s:'',f(){return'You decide the land is worth more to you.';}}]};}},
   senator:{w:()=>.5,make:()=>({x:1*infl(S.t)}),
     view:a=>({art:'🏛️',title:'A fundraiser invitation',text:'A powerful state senator is hosting a fundraiser at a steakhouse off the Strip.',
-      ch:[{l:`Write a ${M(a.x)} check`,s:'Better relations with the county and the state.',f(){spend(a.x);S.city=clamp(S.city+12,0,100);return'The senator remembers your name.';}},{l:'Skip it',s:'',f(){S.city=clamp(S.city-3,0,100);return'Your absence is noted.';}}]})},
-  bank:{w:()=>S.conf>60&&S.creditBonus<2?.5:0,make:()=>({}),
-    view:()=>({art:'🏦',title:'Your bank wants more of your business',text:'Your lender offers to raise your credit line by 25% in exchange for a slightly higher rate.',
-      ch:[{l:'Accept',s:'+25% credit line, +0.5% interest rate.',f(){S.creditBonus*=1.25;S.rateAdd+=.5;return'Your credit line goes up.';}},{l:'Decline',s:'',f(){return'You keep your current terms.';}}]})},
+      ch:[{l:`Write a ${M(a.x)} check`,s:'County +12.',f(){spend(a.x);S.city=clamp(S.city+12,0,100);return'The senator remembers your name.';}},{l:'Skip it',s:'County −3.',f(){S.city=clamp(S.city-3,0,100);return'Your absence is noted.';}}]})},
+  japan:{cd:16,w:()=>yrOf(S.t)<=1992&&myOps().some(p=>(p.shares.you||0)>=25)?.9:0,
+    make(){const p=pick(myOps().filter(p=>(p.shares.you||0)>=25));return{p:p.id};},
+    view:a=>{const p=P(a.p),pr=val(p)*.15*1.35,n=annNet(p),gy=n!=null?PAYOUT*n*.15/pr:null;return{art:'🗾',title:'Money from Tokyo',text:`A Tokyo property company, flush with cash from the bubble at home, wants 15% of ${p.name}. They offer ${M(pr)}, 35% over market value, and promise to stay silent partners.`,
+      ch:[{l:`Sell them 15% (${M(pr)})`,s:`Your stake falls to ${(p.shares.you-15).toFixed(0)}%.${gy!=null?` You give up payouts worth ${P1(gy)} a year on that price, against your ${P1(loanRate()/100)} loan.`:''}`,f(){S.cash+=pr;addFlow('sell',pr);move(p,'you','pub',15);return'The deal closes in a week. They send a gift: a very expensive bottle of whisky.';}},
+          {l:'Decline',s:'Nothing changes.',f(){return'They buy a golf course in California instead.';}}]};}},
+  spectacle:{cd:20,w:()=>yrOf(S.t)>=1989&&yrOf(S.t)<=2002&&myOps().some(p=>p.q>=3&&!(p.buzz>0))?.7:0,
+    make(){const p=pick(myOps().filter(p=>p.q>=3&&!(p.buzz>0)));return{p:p.id,x:(4+p.rooms*.002)*infl(S.t)};},
+    view:a=>({art:'🌋',title:'A free show on the sidewalk',text:`A designer pitches a show out front of ${P(a.p).name}: an erupting volcano, pirate ships or dancing fountains, free to anyone walking by. Crowds stop, and then they come inside.`,
+      ch:[{l:`Build it (${M(a.x)})`,s:'Split by stake. More walk-in guests for two years. Public image +4.',f(){payOwners(P(a.p),a.x);P(a.p).buzz=8;S.rep=clamp(S.rep+4,0,100);return'Opening night stops traffic on the Strip.';}},
+          {l:'Pass',s:'Nothing changes.',f(){return'A rival builds one instead.';}}]})},
+  convention:{cd:10,w:()=>myOps().some(p=>p.q>=3)?.8:0,
+    make(){const p=pick(myOps().filter(p=>p.q>=3));return{p:p.id,x:p.rooms*.0016*infl(S.t)*(1+.2*(p.q-3))};},
+    view:a=>({art:'🏷️',title:'A convention wants your rooms',text:`A trade association wants to block most of the rooms at ${P(a.p).name} next quarter at a group rate.`,
+      ch:[{l:'Take the block',s:`A guaranteed ${M(a.x)} of extra revenue next quarter.`,f(){const p=P(a.p);p.bonusRev=(p.bonusRev||0)+a.x;return'The badges and lanyards arrive.';}},
+          {l:'Keep rooms for walk-ins',s:`50%: walk-ins bring ${M(a.x*1.5)}. 50%: a slow quarter brings only ${M(a.x*.4)}.`,f(){const p=P(a.p),w=rnd()<.5;p.bonusRev=(p.bonusRev||0)+a.x*(w?1.5:.4);return w?'A big fight weekend fills every room at full price.':'It turns out to be a quiet quarter.';}}]})},
+  drought:{cd:24,w:()=>yrOf(S.t)>=2002&&myOps().length?.6:0,
+    make(){const n=myOps().length;return{x:(1+n*.8)*infl(S.t)};},
+    view:a=>({art:'💧',title:'The water authority cracks down',text:'Lake Mead is dropping. The water authority wants resorts to rip out lawns and cut fountain use, or pay a steep surcharge.',
+      ch:[{l:`Go desert-friendly (${M(a.x)})`,s:'County +8, Public image +3.',f(){spend(a.x);S.city=clamp(S.city+8,0,100);S.rep=clamp(S.rep+3,0,100);return'Cactus gardens replace the lawns.';}},
+          {l:`Pay the surcharge (${M(a.x*.4)})`,s:'County −6.',f(){spend(a.x*.4);S.city=clamp(S.city-6,0,100);return'The fountains keep running. The county is not amused.';}}]})},
+  airline:{cd:20,w:()=>myOps().length?.5:0,
+    make(){return{x:3*infl(S.t),c:pick(['London','Tokyo','Mexico City','Toronto','Frankfurt','Seoul'])};},
+    view:a=>({art:'✈️',title:'A new nonstop route',text:`An airline will fly nonstop from ${a.c} if Strip resorts guarantee its marketing. Nobody else has stepped up.`,
+      ch:[{l:`Guarantee it (${M(a.x)})`,s:'Visitors to the whole Strip +2% for good. Your rivals benefit too. County +4.',f(){spend(a.x);S.trend*=1.02;S.city=clamp(S.city+4,0,100);return`The first flight from ${a.c} lands to a brass band.`;}},
+          {l:'Let someone else pay',s:'40% a rival steps up, and you get the visitors for free. Otherwise no route.',f(){if(rnd()<.4){S.trend*=1.02;return'A rival pays. The visitors come anyway.';}return'The airline flies to Orlando instead.';}}]})},
+  outage:{cd:16,w:()=>myOps().length?.6:0,
+    make(){const p=pick(myOps());return{p:p.id,x:(.5+p.rooms*.0006)*infl(S.t)};},
+    view:a=>({art:'🌡️',title:'A record heat wave',text:`It is 117 degrees and the power grid is straining. ${P(a.p).name} has no backup generators.`,
+      ch:[{l:`Install generators (${M(a.x)})`,s:'Split by stake. No risk.',f(){payOwners(P(a.p),a.x);return'The lights stay on.';}},
+          {l:'Take the chance',s:'35% chance of a blackout: 50% capacity next quarter, Public image −5.',f(){if(rnd()<.35){P(a.p).disrupt=.5;S.rep=clamp(S.rep-5,0,100);return'The grid fails. Guests sweat in dark hallways and check out early.';}return'The grid holds.';}}]})},
+  cheats:{cd:14,w:()=>S.license==='licensed'&&myOps().some(p=>p.floor>0)?.6:0,
+    make(){const p=pick(myOps().filter(p=>p.floor>0));return{p:p.id,x:.4*infl(S.t),y:(1+p.floor*.01)*infl(S.t)};},
+    view:a=>({art:'🃏',title:'A cheating ring',text:`Surveillance catches a crew marking cards and past-posting at ${P(a.p).name}.`,
+      ch:[{l:`Prosecute (${M(a.x)} in legal fees)`,s:'Heat −5, County +3.',f(){spend(a.x);S.heat=clamp(S.heat-5,0,100);S.city=clamp(S.city+3,0,100);return'They are convicted. The Gaming Control Board is pleased.';}},
+          {l:'Ban them quietly',s:`Free. 40% they hit another of your casinos for ${M(a.y)}, split by stake.`,f(){if(rnd()<.4){const q=pick(myOps().filter(p=>p.floor>0));spend(a.y*(q.shares.you||0)/100);return`They come back in disguise at ${q.name} and take ${M(a.y)} before anyone notices.`;}return'They are never seen again.';}}]})},
+  wedding:{cd:16,w:()=>myOps().some(p=>p.q>=4)?.5:0,
+    make(){const p=pick(myOps().filter(p=>p.q>=4));return{p:p.id,x:.8*infl(S.t)};},
+    view:a=>({art:'💍',title:'A movie star wedding',text:`A movie star wants to marry at ${P(a.p).name} and asks for the whole thing to be comped. The tabloids will be there.`,
+      ch:[{l:`Comp it (${M(a.x)})`,s:'Split by stake. Public image +6. More walk-in guests for three quarters.',f(){payOwners(P(a.p),a.x);P(a.p).buzz=Math.max(P(a.p).buzz||0,3);S.rep=clamp(S.rep+6,0,100);return'The photos are everywhere.';}},
+          {l:'Charge full price',s:`Revenue +${M(a.x*.5)} next quarter. Public image −2.`,f(){const p=P(a.p);p.bonusRev=(p.bonusRev||0)+a.x*.5;S.rep=clamp(S.rep-2,0,100);return'They pay, and grumble to a gossip columnist.';}}]})},
   chef:{w:()=>myOps().some(p=>p.q>=4&&p.am.includes('dining')&&!p.chef)?.5:0,
     make(){const p=pick(myOps().filter(p=>p.q>=4&&p.am.includes('dining')&&!p.chef));return{p:p.id,x:1.5*infl(S.t)};},
     view:a=>({art:'👨‍🍳',title:'A celebrity chef',text:`A famous chef from Los Angeles wants to open his first Las Vegas restaurant at ${P(a.p).name}. He needs ${M(a.x)} for the build-out.`,
-      ch:[{l:'Do the deal',s:'High rollers and leisure guests like it.',f(){payOwners(P(a.p),a.x);P(a.p).chef=true;return'Reservations book up for months.';}},{l:'Pass',s:'',f(){return'He goes to a rival.';}}]})}
+      ch:[{l:'Do the deal',s:'Split by stake. High rollers and leisure guests are drawn to it for good.',f(){payOwners(P(a.p),a.x);P(a.p).chef=true;return'Reservations book up for months.';}},{l:'Pass',s:'',f(){return'He goes to a rival.';}}]})}
 };
 function drawEvents(){
-  const n=rnd()<.6?(rnd()<.3?2:1):0;
+  const n=rnd()<.5?(rnd()<.15?2:1):0;
   const used=new Set();
   if(EVENTS.labor.w()>0){S.pending.push({kind:'event',id:'labor',a:EVENTS.labor.make()});used.add('labor');}
   for(let k=0;k<n;k++){
-    const pool=Object.entries(EVENTS).filter(([id,e])=>!used.has(id)&&S.t-(S.lastEvt[id]||-99)>=4).map(([id,e])=>[id,e.w()]).filter(x=>x[1]>0);
+    const pool=Object.entries(EVENTS).filter(([id,e])=>!used.has(id)&&S.t-(S.lastEvt[id]||-99)>=(e.cd||10)).map(([id,e])=>[id,e.w()]).filter(x=>x[1]>0);
     const tot=pool.reduce((s,x)=>s+x[1],0);if(!tot)break;let r=rnd()*tot;
     for(const [id,w] of pool){r-=w;if(r<=0){used.add(id);S.lastEvt[id]=S.t;S.pending.push({kind:'event',id,a:EVENTS[id].make()});break;}}
   }
@@ -1350,7 +1396,7 @@ function viewMoney(){
   const invs=Object.entries(S.inv).filter(([id])=>P(id)&&P(id).shares.inv>0);
   return`<h2 class="sec">Money</h2>
   <div class="panel"><h3>Net worth</h3>${sparkline()}</div>
-  <div class="panel"><h3>Next board review · ${dateStr(S.t+nextRev)}</h3><div class="kv"><div>Target net worth</div><div>${M(reviewTarget())}</div><div>Your 4-quarter average</div><div class="${reviewNW()>=reviewTarget()?'pos':'neg'}">${M(reviewNW())}</div><div>Strikes</div><div>${S.strikes} of 2</div></div><p class="hint" style="margin:8px 0 0">The partners judge your average net worth over the last four quarters, and ease the target in a downturn. Two misses in a row and you're fired. Beat it by 25% and you get promoted, with a bigger credit line.</p></div>
+  <div class="panel"><h3>Next board review · ${dateStr(S.t+nextRev)}</h3><div class="kv"><div>Target net worth</div><div>${M(reviewTarget())}</div><div>Your 4-quarter average</div><div class="${reviewNW()>=reviewTarget()?'pos':'neg'}">${M(reviewNW())}</div><div>Strikes</div><div>${S.strikes} of 3</div></div><p class="hint" style="margin:8px 0 0">The partners judge your average net worth over the last four quarters, and ease the target in a downturn. Three misses in a row and you're fired. Miss by a little while still growing and they'll put you on watch instead. Beat it by 25% and you get promoted, with a bigger credit line.</p></div>
   <div class="panel"><h3>Bank credit line</h3><div class="kv"><div>Credit limit</div><div>${M(lim)}</div><div>Drawn</div><div>${M(S.loan)}</div><div>Interest rate</div><div>${loanRate().toFixed(2)}% <small class="hint">prime ${prime(S.t).toFixed(2)} + ${(spread()+S.rateAdd).toFixed(2)}</small></div><div>Interest per quarter</div><div class="neg">${M(-S.loan*loanRate()/400)}</div></div>
   <p class="hint">Your limit is a base set by your title plus ${Math.round(advRate()*100)}% of the value of your stakes. If the loan ever exceeds it, the bank forces a sale.</p>
   ${bankPanel()}
@@ -1536,32 +1582,44 @@ function showPending(){
   } else if(e.kind==='review')showReview();
   else if(e.kind==='retire')showRetire();
 }
+function snapFx(){return{cash:S.cash-S.loan,nw:netWorth(),heat:S.heat,city:S.city,mob:S.mob,conf:S.conf,rep:S.rep,trend:S.trend};}
+function fxChips(a,b){const o=[];const d=(k,l,good)=>{const v=b[k]-a[k];if(Math.abs(v)<.5)return;const pos=good?v>0:v<0;o.push(`<span class="chip ${good==null?'':pos?'good':'bad'}">${l} ${v>0?'+':'−'}${Math.round(Math.abs(v))}</span>`);};
+  const c=b.cash-a.cash;if(Math.abs(c)>.0005)o.push(`<span class="chip ${c>0?'good':'bad'}">Cash ${c>0?'+':''}${M(c)}</span>`);
+  const n=b.nw-a.nw-c;if(Math.abs(n)>.05)o.push(`<span class="chip ${n>0?'good':'bad'}">Value of stakes ${n>0?'+':''}${M(n)}</span>`);
+  d('heat','Heat',false);d('city','County',true);d('mob','Syndicate',null);d('conf','Backers',true);d('rep','Public image',true);
+  if(b.trend/a.trend>1.001)o.push(`<span class="chip good">Strip visitors +${Math.round((b.trend/a.trend-1)*100)}%</span>`);
+  return o.length?`<div class="legend" style="gap:6px">${o.join('')}</div>`:'';}
 function choose(i){
   const e=S.pending[0];if(!e||e.kind!=='event')return;
   const ev=EVENTS[e.id].view(e.a);const c=ev.ch[i];if(!c||c.dis)return;
-  const out=c.f();S.pending.shift();save();render();
-  openSheet(`<div class="evt-art">${ev.art}</div><h2 class="news" style="font-size:24px;border:none">${esc(ev.title)}</h2><p class="evt-text"><b>${esc(c.l)}.</b> ${esc(out||'')}</p><button class="btn primary" data-a="pendnext">Continue</button>`);
+  const b0=snapFx();const out=c.f();const fx=fxChips(b0,snapFx());S.pending.shift();save();render();
+  openSheet(`<div class="evt-art">${ev.art}</div><h2 class="news" style="font-size:24px;border:none">${esc(ev.title)}</h2><p class="evt-text"><b>${esc(c.l)}.</b> ${esc(out||'')}</p>
+  <div class="panel"><h3>What changed</h3>${fx||'<p class="hint" style="margin:0">Nothing yet. Any effect shows up in next quarter\'s results.</p>'}</div><button class="btn primary" data-a="pendnext">Continue</button>`);
 }
 function reviewNW(){const h=S.hist.slice(-4);return h.reduce((a,x)=>a+x.nw,0)/h.length;}
 function reviewTarget(){return S.target*clamp(.75+.25*macro(S.t),.75,1);}
 function nextTarget(nw){const g=lerpT(yf(S.t),[[1990,1.3],[2000,1.25],[2020,1.18],[2047,1.12]]);return Math.max(S.target*g,nw*1.1);}
+function onWatch(nw,r){return r>=.85&&nw>=S.lastReviewNW*1.08;}
+function pipeline(){let c=0;for(const p of S.props){if((p.shares.you||0)>0&&p.project&&p.project.kind==='build')c+=(p.book+devGain(p))*p.shares.you/100;}return c;}
 function showReview(){
   const nw=reviewNW(),tg=reviewTarget(),r=nw/tg;let verdict,txt,cls;
   if(r>=1.25){verdict='Outstanding';cls='good';txt=S.title<TITLES.length-1?`The partners are thrilled. You are promoted to <b>${TITLES[S.title+1]}</b>, and the bank raises your credit line.`:'The partners have run out of titles to give you.';}
   else if(r>=1){verdict='Meets expectations';cls='cyan';txt='Solid work. The partners want more next time.';}
-  else{verdict='Below target';cls='bad';txt=S.strikes>=1?'This is your second miss in a row. The partners have seen enough.':'The partners are disappointed. Miss the next target and you are finished.';}
+  else if(onWatch(nw,r)){verdict='On watch';cls='gold';txt=`You missed, but not by much, and you've grown ${Math.round((nw/S.lastReviewNW-1)*100)}% since the last review. The partners will give you more time. No strike.`;}
+  else{verdict='Below target';cls='bad';txt=S.strikes>=2?'This is your third miss in a row. The partners have seen enough.':S.strikes===1?'Your second miss in a row. One more and you are finished.':'The partners are disappointed. That is one strike. Three in a row and you are out.';}
   const nextT=nextTarget(nw);
   openSheet(`<p class="newsdate">${dateStr(S.t)} · New York</p><h2 class="news" style="font-size:26px">Board review</h2>
-  <div class="panel"><div class="kv"><div>Target${tg<S.target-.01?' (eased for the downturn)':''}</div><div>${M(tg)}</div><div>Your net worth, last 4 quarters avg.</div><div>${M(nw)}</div><div class="tot">Result</div><div class="tot"><span class="chip ${cls}">${verdict}</span></div></div></div>
-  <p class="evt-text">${txt}</p>${(r>=1||S.strikes<1)?`<p class="hint">Next review in two years. Target: <b>${M(nextT)}</b>.</p>`:''}
+  <div class="panel"><div class="kv"><div>Target${tg<S.target-.01?' (eased for the downturn)':''}</div><div>${M(tg)}</div><div>Your net worth, last 4 quarters avg.</div><div>${M(nw)}</div>${pipeline()>.05?`<div>Includes resorts you're building, valued as they go up</div><div>${M(pipeline())}</div>`:''}<div>Last review</div><div>${M(S.lastReviewNW)}</div><div class="tot">Result</div><div class="tot"><span class="chip ${cls}">${verdict}</span></div></div></div>
+  <p class="evt-text">${txt}</p>${(r>=1||S.strikes<2||onWatch(nw,r))?`<p class="hint">Next review in two years. Target: <b>${M(nextT)}</b>.</p>`:''}
   <button class="btn primary" data-a="reviewdone">Continue</button>`);
 }
 function reviewDone(){
   const nw=reviewNW(),r=nw/reviewTarget();
   if(r>=1.25){if(S.title<TITLES.length-1)S.title++;S.conf=clamp(S.conf+15,0,100);S.strikes=0;}
   else if(r>=1){S.conf=clamp(S.conf+6,0,100);S.strikes=0;}
-  else{S.strikes++;S.conf=clamp(S.conf-12,0,100);if(S.strikes>=2)S.over={kind:'fired',why:'Two missed targets in a row. The partners recall you to New York and hand your book to someone younger and hungrier.'};}
-  S.target=nextTarget(nw);
+  else if(onWatch(nw,r)){S.conf=clamp(S.conf-3,0,100);}
+  else{S.strikes++;S.conf=clamp(S.conf-12,0,100);if(S.strikes>=3)S.over={kind:'fired',why:'Three missed targets in a row. The partners recall you to New York and hand your book to someone younger and hungrier.'};}
+  S.target=r<1?S.target*1.05:nextTarget(nw);S.lastReviewNW=nw;
   S.pending.shift();save();render();showPending();
 }
 function showRetire(){S.over={kind:'retire',why:`Sixty years after you arrived with a borrowed bankroll, you retire as ${TITLES[S.title]}.`};showOver();}
@@ -1576,7 +1634,7 @@ function showOver(){
 
 /* ---------- intro & menu ---------- */
 // bump with every release, so a player can say which build they are on
-const APP_VERSION='0.5.1';
+const APP_VERSION='0.6';
 function showIntro(){
   const saved=loadSave();
   openSheet(`<div class="logo-big">HOUSE EDGE</div><p class="ver">Version ${APP_VERSION}</p><p class="lede">Las Vegas, 1988.</p>
@@ -1595,7 +1653,7 @@ function showMenu(){
   <p><b>Yields:</b> a stake's payout yield is its yearly payouts divided by its price. It's a yearly rate, like your loan, so you can tell at a glance whether a stake pays more than it costs to borrow for it. The analyst on each property and offer reads the same numbers and gives you his view, but he can't see what's coming.</p>
   <p><b>Payouts:</b> owners receive 85% of each property's net income every quarter (revenue minus running costs, before anyone's loan interest). Losses become capital calls.</p>
   <p><b>Value</b> is about ${valMult(S.t).toFixed(1)} times a year's net income, never less than the land underneath. Land and condo prices follow real Las Vegas booms and busts.</p>
-  <p><b>Win</b> by controlling every property, or by surviving sixty years. Lose by missing two reviews in a row, running out of backer confidence, or getting margin-called with nothing left to sell.</p></div></div>
+  <p><b>Win</b> by controlling every property, or by surviving sixty years. Lose by missing three reviews in a row, running out of backer confidence, or getting margin-called with nothing left to sell.</p></div></div>
   <button class="btn" data-a="quit">Abandon this career</button>
   <p class="ver">House Edge · version ${APP_VERSION}</p>`);
 }
